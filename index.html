@@ -1,0 +1,1767 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kudhail Family Finance Tracker</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/recharts@2.8.0/umd/Recharts.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f172a;color:#f1f5f9}
+    ::-webkit-scrollbar{width:5px;height:5px}
+    ::-webkit-scrollbar-track{background:#1e293b}
+    ::-webkit-scrollbar-thumb{background:#475569;border-radius:3px}
+    input,select,textarea{background:#1e293b;border:1px solid #334155;color:#f1f5f9;border-radius:8px;padding:8px 12px;width:100%;transition:border-color .2s}
+    input:focus,select:focus,textarea:focus{outline:none;border-color:#3b82f6}
+    input::placeholder{color:#64748b}
+    select option{background:#1e293b}
+    button{cursor:pointer;transition:all .2s}
+    @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+    .fade-in{animation:fadeIn .25s ease}
+    @keyframes modalIn{from{opacity:0;transform:scale(.95)}to{opacity:1;transform:scale(1)}}
+    .modal-box{animation:modalIn .2s ease}
+    .nav-item{transition:all .15s;border-left:3px solid transparent}
+    .nav-item.active{border-left-color:#3b82f6;background:rgba(59,130,246,.12)}
+    .nav-item:hover:not(.active){background:rgba(255,255,255,.05)}
+    .stat-card{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:20px;transition:transform .2s,box-shadow .2s}
+    .stat-card:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,0,0,.3)}
+    .progress-track{background:#334155;border-radius:99px;height:8px;overflow:hidden}
+    .progress-fill{height:100%;border-radius:99px;transition:width .5s ease}
+    table{width:100%;border-collapse:collapse}
+    th{text-align:left;padding:10px 14px;color:#94a3b8;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid #334155}
+    td{padding:12px 14px;border-bottom:1px solid #1e293b;font-size:14px}
+    tr:last-child td{border-bottom:none}
+    tr:hover td{background:rgba(255,255,255,.02)}
+    .chip{display:inline-flex;align-items:center;gap:4px;padding:2px 10px;border-radius:99px;font-size:12px;font-weight:500}
+    label{display:block;font-size:13px;color:#94a3b8;margin-bottom:4px;font-weight:500}
+    .form-row{display:grid;gap:12px}
+    @media(min-width:640px){.form-row.cols2{grid-template-columns:1fr 1fr}.form-row.cols3{grid-template-columns:1fr 1fr 1fr}}
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState,useEffect,useMemo,useCallback,useRef} = React;
+const {BarChart,Bar,PieChart,Pie,Cell,XAxis,YAxis,CartesianGrid,Tooltip,Legend,ResponsiveContainer,AreaChart,Area} = Recharts;
+
+// ── UTILS ──────────────────────────────────────────────────────────────────
+const fmt = n => {
+  if(n==null||isNaN(n)) return '£0.00';
+  return 'fmt'+Math.abs(n).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2});
+};
+const fmtK = n => {
+  if(n==null||isNaN(n)) return '£0';
+  const a=Math.abs(n);
+  if(a>=1e6) return 'fmt'+(n/1e6).toFixed(1)+'m';
+  if(a>=1e3) return 'fmt'+(n/1e3).toFixed(1)+'k';
+  return 'fmt'+Math.round(n).toLocaleString('en-GB');
+};
+const toMonthly = (amount,freq) => {
+  const a=parseFloat(amount)||0;
+  if(freq==='weekly') return a*52/12;
+  if(freq==='biweekly') return a*26/12;
+  if(freq==='yearly') return a/12;
+  return a;
+};
+const uid = () => Math.random().toString(36).slice(2);
+const calcFV = (pv,pmt,rAnnual,years) => {
+  const r=rAnnual/12, n=years*12;
+  if(r===0) return pv+pmt*n;
+  return pv*Math.pow(1+r,n)+pmt*((Math.pow(1+r,n)-1)/r);
+};
+const requiredPMT = (pv,target,rAnnual,years) => {
+  const r=rAnnual/12, n=years*12;
+  const fvPV=pv*Math.pow(1+r,n);
+  const rem=target-fvPV;
+  if(rem<=0) return 0;
+  if(r===0) return rem/n;
+  return rem*r/(Math.pow(1+r,n)-1);
+};
+const monthsUntil = dateStr => {
+  if(!dateStr) return 0;
+  const d=new Date(dateStr), now=new Date();
+  return Math.max(0,(d.getFullYear()-now.getFullYear())*12+(d.getMonth()-now.getMonth()));
+};
+
+// ── DEFAULT DATA ───────────────────────────────────────────────────────────
+const DEFAULT_MEMBERS = [
+  {id:'kuldip',  name:'Kuldip',    color:'#3b82f6',initials:'KK',role:'Parent'},
+  {id:'jasleen', name:'Jasleen',   color:'#ec4899',initials:'JK',role:'Parent'},
+  {id:'nirvaan', name:'Nirvaan',   color:'#10b981',initials:'NK',role:'Child'},
+  {id:'archan',  name:'Archan',    color:'#f59e0b',initials:'AK',role:'Child'},
+  {id:'child3',  name:'Child 3',   color:'#8b5cf6',initials:'CK',role:'Child'},
+  {id:'household',name:'Household',color:'#64748b',initials:'HH',role:'Shared'},
+];
+
+const DEFAULT_BILLS = [
+  {id:uid(),pid:'household',name:'Mortgage',             cat:'Home',        amt:1950.25,freq:'monthly'},
+  {id:uid(),pid:'household',name:'Buildings & Contents', cat:'Home',        amt:1950,   freq:'yearly'},
+  {id:uid(),pid:'household',name:'Council Tax',          cat:'Home',        amt:349,    freq:'monthly'},
+  {id:uid(),pid:'household',name:'Water Rates',          cat:'Home',        amt:32,     freq:'monthly'},
+  {id:uid(),pid:'household',name:'Gas',                  cat:'Home',        amt:150,    freq:'monthly'},
+  {id:uid(),pid:'household',name:'Internet',             cat:'Home',        amt:40,     freq:'monthly'},
+  {id:uid(),pid:'household',name:'TV Licence',           cat:'Home',        amt:174.50, freq:'yearly'},
+  {id:uid(),pid:'household',name:'Mobile Phone',         cat:'Home',        amt:45,     freq:'monthly'},
+  {id:uid(),pid:'household',name:'Alarm Service',        cat:'Home',        amt:250,    freq:'yearly'},
+  {id:uid(),pid:'household',name:'Life Insurance',       cat:'Insurance',   amt:33.33,  freq:'monthly'},
+  {id:uid(),pid:'household',name:'Metro Bank Insurance', cat:'Insurance',   amt:43.75,  freq:'monthly'},
+  {id:uid(),pid:'household',name:'Food & Household Shopping',cat:'Food',   amt:150,    freq:'weekly'},
+  {id:uid(),pid:'household',name:'Eating Out',           cat:'Food',        amt:250,    freq:'monthly'},
+  {id:uid(),pid:'household',name:'Coffees & Snacks',     cat:'Food',        amt:20,     freq:'weekly'},
+  {id:uid(),pid:'kuldip',   name:'Meals at Work',        cat:'Food',        amt:20,     freq:'weekly'},
+  {id:uid(),pid:'household',name:'National Trust',       cat:'Food',        amt:13.25,  freq:'monthly'},
+  {id:uid(),pid:'kuldip',   name:'Rail / Bus / Coach',   cat:'Transport',   amt:90,     freq:'weekly'},
+  {id:uid(),pid:'household',name:'Car Maintenance/Lease',cat:'Transport',   amt:563.71, freq:'monthly'},
+  {id:uid(),pid:'household',name:'Car Insurance',        cat:'Transport',   amt:674.43, freq:'yearly'},
+  {id:uid(),pid:'household',name:'Petrol/Diesel',        cat:'Transport',   amt:250,    freq:'monthly'},
+  {id:uid(),pid:'household',name:'Gap Car Insurance',    cat:'Transport',   amt:50,     freq:'yearly'},
+  {id:uid(),pid:'jasleen',  name:'Jasleen Coach',        cat:'Transport',   amt:1400,   freq:'yearly'},
+  {id:uid(),pid:'household',name:'School Meals',         cat:'Family',      amt:10,     freq:'weekly'},
+  {id:uid(),pid:'household',name:'School Trips',         cat:'Family',      amt:200,    freq:'yearly'},
+  {id:uid(),pid:'household',name:'TTW',                  cat:'Family',      amt:645,    freq:'yearly'},
+  {id:uid(),pid:'household',name:'Netball',              cat:'Family',      amt:300,    freq:'yearly'},
+  {id:uid(),pid:'household',name:'Gymnastics',           cat:'Family',      amt:100,    freq:'yearly'},
+  {id:uid(),pid:'household',name:'Swimming',             cat:'Family',      amt:135,    freq:'monthly'},
+  {id:uid(),pid:'household',name:'Piano Lessons',        cat:'Family',      amt:6,      freq:'weekly'},
+  {id:uid(),pid:'household',name:'Karate',               cat:'Family',      amt:62.50,  freq:'monthly'},
+  {id:uid(),pid:'household',name:'Cinema / Theatre',     cat:'Leisure',     amt:50,     freq:'monthly'},
+  {id:uid(),pid:'household',name:'Sky / Satellite TV',   cat:'Leisure',     amt:70,     freq:'yearly'},
+  {id:uid(),pid:'nirvaan',  name:'Nirvaan Activities',   cat:'Family',      amt:75,     freq:'yearly'},
+  {id:uid(),pid:'archan',   name:'Archan Activities',    cat:'Family',      amt:125,    freq:'yearly'},
+  {id:uid(),pid:'nirvaan',  name:'First Soccer',         cat:'Family',      amt:135,    freq:'yearly'},
+];
+
+const DEFAULT_SUBS = [
+  {id:uid(),name:'Netflix',             amt:17.99,freq:'monthly',cat:'Entertainment'},
+  {id:uid(),name:'Spotify',             amt:11.99,freq:'monthly',cat:'Entertainment'},
+  {id:uid(),name:'Amazon Prime',        amt:8.99, freq:'monthly',cat:'Entertainment'},
+  {id:uid(),name:'Disney+',             amt:4.99, freq:'monthly',cat:'Entertainment'},
+  {id:uid(),name:'Claude AI (Anthropic)',amt:18,  freq:'monthly',cat:'AI Tools'},
+  {id:uid(),name:'Microsoft 365',       amt:8.33, freq:'monthly',cat:'Software'},
+  {id:uid(),name:'iCloud Storage',      amt:2.99, freq:'monthly',cat:'Software'},
+];
+
+const STORAGE_KEY='kudhail_v3';
+const load = () => { try{ const s=localStorage.getItem(STORAGE_KEY); return s?JSON.parse(s):null; }catch(e){ return null; } };
+const save = d => { try{ localStorage.setItem(STORAGE_KEY,JSON.stringify(d)); }catch(e){} };
+
+// ── UI ATOMS ───────────────────────────────────────────────────────────────
+const Btn = ({children,onClick,variant='primary',size='md',className='',type='button',...p}) => {
+  const base='rounded-lg font-medium transition-all focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-blue-500';
+  const sz = size==='sm'?'px-3 py-1.5 text-sm':size==='lg'?'px-6 py-3 text-base':'px-4 py-2 text-sm';
+  const v = {
+    primary:'bg-blue-600 hover:bg-blue-500 text-white',
+    danger: 'bg-red-600/20 hover:bg-red-600/40 text-red-400 border border-red-600/30',
+    ghost:  'bg-transparent hover:bg-white/5 text-slate-300 border border-slate-700',
+    success:'bg-emerald-600 hover:bg-emerald-500 text-white',
+  }[variant]||'bg-blue-600 hover:bg-blue-500 text-white';
+  return <button type={type} onClick={onClick} className={`${base} ${sz} ${v} ${className}`} {...p}>{children}</button>;
+};
+
+const Modal = ({title,onClose,children,wide=false}) => (
+  <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{background:'rgba(0,0,0,.7)'}}>
+    <div className={`modal-box bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl w-full ${wide?'max-w-2xl':'max-w-lg'} max-h-[90vh] overflow-y-auto`}>
+      <div className="flex items-center justify-between p-6 border-b border-slate-700">
+        <h3 className="text-lg font-semibold">{title}</h3>
+        <button onClick={onClose} className="text-slate-400 hover:text-white text-xl leading-none">×</button>
+      </div>
+      <div className="p-6">{children}</div>
+    </div>
+  </div>
+);
+
+const Card = ({children,className=''}) => (
+  <div className={`bg-slate-800 border border-slate-700 rounded-xl ${className}`}>{children}</div>
+);
+
+const Badge = ({member}) => (
+  <span className="chip text-xs font-semibold" style={{background:member.color+'22',color:member.color}}>
+    {member.name}
+  </span>
+);
+
+const PersonAvatar = ({member,size=8}) => (
+  <div className={`w-${size} h-${size} rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0`}
+       style={{background:member.color+'33',color:member.color}}>
+    {member.initials}
+  </div>
+);
+
+const FreqLabel = ({f}) => {
+  const m={monthly:'Monthly',weekly:'Weekly',biweekly:'Fortnightly',yearly:'Yearly'};
+  return <span className="chip text-xs" style={{background:'#334155',color:'#94a3b8'}}>{m[f]||f}</span>;
+};
+
+const StatCard = ({label,value,sub,color='blue',icon}) => {
+  const c={blue:'text-blue-400',green:'text-emerald-400',red:'text-red-400',amber:'text-amber-400',purple:'text-purple-400',pink:'text-pink-400'}[color]||'text-blue-400';
+  return (
+    <div className="stat-card fade-in">
+      <div className="flex items-start justify-between mb-2">
+        <span className="text-sm text-slate-400">{label}</span>
+        {icon&&<span className="text-xl">{icon}</span>}
+      </div>
+      <div className={`text-2xl font-bold ${c}`}>{value}</div>
+      {sub&&<div className="text-xs text-slate-500 mt-1">{sub}</div>}
+    </div>
+  );
+};
+
+const SectionHeader = ({title,action}) => (
+  <div className="flex items-center justify-between mb-4">
+    <h2 className="text-lg font-semibold text-slate-100">{title}</h2>
+    {action}
+  </div>
+);
+
+const EmptyState = ({text}) => (
+  <div className="text-center py-12 text-slate-500">
+    <div className="text-3xl mb-2">📭</div>
+    <p className="text-sm">{text}</p>
+  </div>
+);
+
+const CatBadge = ({cat}) => {
+  const colors={
+    Home:'#3b82f6',Insurance:'#8b5cf6',Food:'#f59e0b',Transport:'#10b981',
+    Family:'#ec4899',Leisure:'#f97316',Entertainment:'#ec4899',
+    'AI Tools':'#06b6d4',Software:'#6366f1',Other:'#64748b'
+  };
+  const c=colors[cat]||'#64748b';
+  return <span className="chip text-xs" style={{background:c+'22',color:c}}>{cat}</span>;
+};
+
+// ── PERSON FILTER BAR ─────────────────────────────────────────────────────
+const PersonFilter = ({members,selected,onChange}) => (
+  <div className="flex flex-wrap gap-2 mb-6">
+    <button
+      onClick={()=>onChange('all')}
+      className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${selected==='all'?'bg-blue-600 text-white':'bg-slate-700 text-slate-400 hover:bg-slate-600'}`}>
+      All
+    </button>
+    {members.map(m=>(
+      <button key={m.id} onClick={()=>onChange(m.id)}
+        className="px-3 py-1.5 rounded-full text-xs font-semibold transition-all"
+        style={selected===m.id?{background:m.color,color:'#fff'}:{background:m.color+'22',color:m.color}}>
+        {m.name}
+      </button>
+    ))}
+  </div>
+);
+
+// ── INCOME PAGE ───────────────────────────────────────────────────────────
+const INCOME_CATS = ['Salary','Rental Income','Dividends','Side Hustle','Benefits','Other'];
+const FREQS = ['weekly','biweekly','monthly','yearly'];
+
+function IncomePage({members,income,setIncome,selectedPerson}) {
+  const [showForm,setShowForm] = useState(false);
+  const [editing,setEditing] = useState(null);
+  const blank = {pid:'kuldip',name:'',cat:'Salary',amt:'',freq:'monthly'};
+  const [form,setForm] = useState(blank);
+
+  const openAdd = () => { setEditing(null); setForm(blank); setShowForm(true); };
+  const openEdit = r => { setEditing(r.id); setForm({pid:r.pid,name:r.name,cat:r.cat,amt:r.amt,freq:r.freq}); setShowForm(true); };
+  const handleSave = () => {
+    if(!form.name||!form.amt) return;
+    if(editing) setIncome(p=>p.map(x=>x.id===editing?{...x,...form,amt:parseFloat(form.amt)}:x));
+    else setIncome(p=>[...p,{id:uid(),...form,amt:parseFloat(form.amt)}]);
+    setShowForm(false);
+  };
+  const del = id => setIncome(p=>p.filter(x=>x.id!==id));
+
+  const visible = selectedPerson==='all'?income:income.filter(x=>x.pid===selectedPerson);
+  const totalMonthly = income.reduce((s,x)=>s+toMonthly(x.amt,x.freq),0);
+
+  const byPerson = members.filter(m=>m.role!=='Shared').map(m=>({
+    member:m,
+    items:income.filter(x=>x.pid===m.id),
+    monthly:income.filter(x=>x.pid===m.id).reduce((s,x)=>s+toMonthly(x.amt,x.freq),0)
+  })).filter(x=>x.items.length>0||selectedPerson==='all');
+
+  const f=v=><span className="cursor-pointer" onClick={()=>setForm(p=>({...p,...v}))}>{null}</span>;
+
+  return (
+    <div className="fade-in space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Income Tracker</h1>
+          <p className="text-slate-400 text-sm mt-1">Total household monthly income: <span className="text-emerald-400 font-bold">{fmt(totalMonthly)}</span> · <span className="text-emerald-300">{fmt(totalMonthly*12)}/yr</span></p>
+        </div>
+        <Btn onClick={openAdd}>+ Add Income</Btn>
+      </div>
+
+      {income.length===0&&<EmptyState text="No income added yet. Click 'Add Income' to get started."/>}
+
+      {byPerson.filter(g=>selectedPerson==='all'||g.member.id===selectedPerson).map(({member,items,monthly})=>(
+        <Card key={member.id} className="overflow-hidden">
+          <div className="flex items-center gap-3 px-5 py-4 border-b border-slate-700">
+            <PersonAvatar member={member} size={9}/>
+            <div>
+              <div className="font-semibold">{member.name}</div>
+              <div className="text-sm text-emerald-400">{fmt(monthly)}/mo · {fmt(monthly*12)}/yr</div>
+            </div>
+          </div>
+          <table>
+            <thead><tr>
+              <th>Source</th><th>Category</th><th>Amount</th><th>Frequency</th><th>Monthly</th><th></th>
+            </tr></thead>
+            <tbody>
+              {items.map(x=>(
+                <tr key={x.id}>
+                  <td className="font-medium">{x.name}</td>
+                  <td><CatBadge cat={x.cat}/></td>
+                  <td>{fmt(x.amt)}</td>
+                  <td><FreqLabel f={x.freq}/></td>
+                  <td className="text-emerald-400 font-semibold">{fmt(toMonthly(x.amt,x.freq))}</td>
+                  <td>
+                    <div className="flex gap-2">
+                      <Btn size="sm" variant="ghost" onClick={()=>openEdit(x)}>Edit</Btn>
+                      <Btn size="sm" variant="danger" onClick={()=>del(x.id)}>Del</Btn>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
+      ))}
+
+      {showForm&&(
+        <Modal title={editing?'Edit Income':'Add Income Source'} onClose={()=>setShowForm(false)}>
+          <div className="space-y-4">
+            <div className="form-row cols2">
+              <div>
+                <label>Person</label>
+                <select value={form.pid} onChange={e=>setForm(p=>({...p,pid:e.target.value}))}>
+                  {members.filter(m=>m.role!=='Shared').map(m=><option key={m.id} value={m.id}>{m.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label>Category</label>
+                <select value={form.cat} onChange={e=>setForm(p=>({...p,cat:e.target.value}))}>
+                  {INCOME_CATS.map(c=><option key={c}>{c}</option>)}
+                </select>
+              </div>
+            </div>
+            <div>
+              <label>Name / Source</label>
+              <input placeholder="e.g. Main Salary" value={form.name} onChange={e=>setForm(p=>({...p,name:e.target.value}))}/>
+            </div>
+            <div className="form-row cols2">
+              <div>
+                <label>Amount (£)</label>
+                <input type="number" placeholder="0.00" value={form.amt} onChange={e=>setForm(p=>({...p,amt:e.target.value}))}/>
+              </div>
+              <div>
+                <label>Frequency</label>
+                <select value={form.freq} onChange={e=>setForm(p=>({...p,freq:e.target.value}))}>
+                  {FREQS.map(f=><option key={f} value={f}>{f.charAt(0).toUpperCase()+f.slice(1)}</option>)}
+                </select>
+              </div>
+            </div>
+            {form.amt&&<p className="text-sm text-slate-400">≈ <span className="text-emerald-400 font-bold">{fmt(toMonthly(form.amt,form.freq))}</span>/month</p>}
+            <div className="flex gap-3 pt-2">
+              <Btn onClick={handleSave} className="flex-1">Save</Btn>
+              <Btn variant="ghost" onClick={()=>setShowForm(false)} className="flex-1">Cancel</Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// ── BILLS PAGE ─────────────────────────────────────────────────────────────
+const BILL_CATS = ['Home','Insurance','Food','Transport','Family','Leisure','Health','Other'];
+
+function BillsPage({members,bills,setBills,selectedPerson}) {
+  const [showForm,setShowForm]=useState(false);
+  const [editing,setEditing]=useState(null);
+  const [filterCat,setFilterCat]=useState('all');
+  const blank={pid:'household',name:'',cat:'Home',amt:'',freq:'monthly'};
+  const [form,setForm]=useState(blank);
+
+  const openAdd=()=>{setEditing(null);setForm(blank);setShowForm(true);};
+  const openEdit=r=>{setEditing(r.id);setForm({pid:r.pid,name:r.name,cat:r.cat,amt:r.amt,freq:r.freq});setShowForm(true);};
+  const save=()=>{
+    if(!form.name||!form.amt) return;
+    if(editing) setBills(p=>p.map(x=>x.id===editing?{...x,...form,amt:parseFloat(form.amt)}:x));
+    else setBills(p=>[...p,{id:uid(),...form,amt:parseFloat(form.amt)}]);
+    setShowForm(false);
+  };
+  const del=id=>setBills(p=>p.filter(x=>x.id!==id));
+
+  const getMember=id=>members.find(m=>m.id===id)||members[members.length-1];
+
+  let visible=bills;
+  if(selectedPerson!=='all') visible=visible.filter(x=>x.pid===selectedPerson||x.pid==='household');
+  if(filterCat!=='all') visible=visible.filter(x=>x.cat===filterCat);
+
+  const totalMonthly=visible.reduce((s,x)=>s+toMonthly(x.amt,x.freq),0);
+
+  const cats=[...new Set(bills.map(b=>b.cat))];
+
+  return (
+    <div className="fade-in space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Monthly Bills</h1>
+          <p className="text-slate-400 text-sm mt-1">Showing: <span className="text-red-400 font-bold">{fmt(totalMonthly)}/mo</span> · <span className="text-red-300">{fmt(totalMonthly*12)}/yr</span></p>
+        </div>
+        <Btn onClick={openAdd}>+ Add Bill</Btn>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        <button onClick={()=>setFilterCat('all')} className={`px-3 py-1 rounded-full text-xs font-semibold transition-all ${filterCat==='all'?'bg-slate-600 text-white':'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}>All Categories</button>
+        {cats.map(c=><button key={c} onClick={()=>setFilterCat(c)} className={`px-3 py-1 rounded-full text-xs font-semibold transition-all ${filterCat===c?'bg-slate-600 text-white':'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}>{c}</button>)}
+      </div>
+
+      <Card className="overflow-hidden">
+        {visible.length===0?<div className="p-8"><EmptyState text="No bills match this filter."/></div>:(
+          <table>
+            <thead><tr>
+              <th>Bill</th><th>Person</th><th>Category</th><th>Amount</th><th>Frequency</th><th>Monthly</th><th></th>
+            </tr></thead>
+            <tbody>
+              {visible.map(x=>{
+                const m=getMember(x.pid);
+                return (
+                  <tr key={x.id}>
+                    <td className="font-medium">{x.name}</td>
+                    <td><Badge member={m}/></td>
+                    <td><CatBadge cat={x.cat}/></td>
+                    <td>{fmt(x.amt)}</td>
+                    <td><FreqLabel f={x.freq}/></td>
+                    <td className="text-red-400 font-semibold">{fmt(toMonthly(x.amt,x.freq))}</td>
+                    <td>
+                      <div className="flex gap-2">
+                        <Btn size="sm" variant="ghost" onClick={()=>openEdit(x)}>Edit</Btn>
+                        <Btn size="sm" variant="danger" onClick={()=>del(x.id)}>Del</Btn>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+              <tr>
+                <td colSpan={5} className="font-bold text-right text-slate-300">Total Monthly</td>
+                <td className="font-bold text-red-400 text-lg">{fmt(totalMonthly)}</td>
+                <td></td>
+              </tr>
+            </tbody>
+          </table>
+        )}
+      </Card>
+
+      {showForm&&(
+        <Modal title={editing?'Edit Bill':'Add Bill'} onClose={()=>setShowForm(false)}>
+          <div className="space-y-4">
+            <div className="form-row cols2">
+              <div>
+                <label>Assigned To</label>
+                <select value={form.pid} onChange={e=>setForm(p=>({...p,pid:e.target.value}))}>
+                  {members.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label>Category</label>
+                <select value={form.cat} onChange={e=>setForm(p=>({...p,cat:e.target.value}))}>
+                  {BILL_CATS.map(c=><option key={c}>{c}</option>)}
+                </select>
+              </div>
+            </div>
+            <div>
+              <label>Bill Name</label>
+              <input placeholder="e.g. Mortgage" value={form.name} onChange={e=>setForm(p=>({...p,name:e.target.value}))}/>
+            </div>
+            <div className="form-row cols2">
+              <div>
+                <label>Amount (£)</label>
+                <input type="number" placeholder="0.00" value={form.amt} onChange={e=>setForm(p=>({...p,amt:e.target.value}))}/>
+              </div>
+              <div>
+                <label>Frequency</label>
+                <select value={form.freq} onChange={e=>setForm(p=>({...p,freq:e.target.value}))}>
+                  {FREQS.map(f=><option key={f} value={f}>{f.charAt(0).toUpperCase()+f.slice(1)}</option>)}
+                </select>
+              </div>
+            </div>
+            {form.amt&&<p className="text-sm text-slate-400">≈ <span className="text-red-400 font-bold">{fmt(toMonthly(form.amt,form.freq))}</span>/month</p>}
+            <div className="flex gap-3 pt-2">
+              <Btn onClick={save} className="flex-1">Save</Btn>
+              <Btn variant="ghost" onClick={()=>setShowForm(false)} className="flex-1">Cancel</Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// ── SUBSCRIPTIONS ──────────────────────────────────────────────────────────
+const SUB_CATS=['Entertainment','AI Tools','Software','News','Gaming','Health','Other'];
+
+function SubsPage({subs,setSubs}) {
+  const [showForm,setShowForm]=useState(false);
+  const [editing,setEditing]=useState(null);
+  const blank={name:'',cat:'Entertainment',amt:'',freq:'monthly'};
+  const [form,setForm]=useState(blank);
+
+  const openAdd=()=>{setEditing(null);setForm(blank);setShowForm(true);};
+  const openEdit=r=>{setEditing(r.id);setForm({name:r.name,cat:r.cat,amt:r.amt,freq:r.freq});setShowForm(true);};
+  const save=()=>{
+    if(!form.name||!form.amt) return;
+    if(editing) setSubs(p=>p.map(x=>x.id===editing?{...x,...form,amt:parseFloat(form.amt)}:x));
+    else setSubs(p=>[...p,{id:uid(),...form,amt:parseFloat(form.amt)}]);
+    setShowForm(false);
+  };
+  const del=id=>setSubs(p=>p.filter(x=>x.id!==id));
+
+  const total=subs.reduce((s,x)=>s+toMonthly(x.amt,x.freq),0);
+
+  const byCat=[...new Set(subs.map(s=>s.cat))].map(cat=>({cat,items:subs.filter(s=>s.cat===cat)}));
+
+  return (
+    <div className="fade-in space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Subscriptions</h1>
+          <p className="text-slate-400 text-sm mt-1">Total: <span className="text-amber-400 font-bold">{fmt(total)}/mo</span> · {fmt(total*12)}/yr</p>
+        </div>
+        <Btn onClick={openAdd}>+ Add Subscription</Btn>
+      </div>
+
+      {byCat.map(({cat,items})=>(
+        <Card key={cat} className="overflow-hidden">
+          <div className="px-5 py-3 border-b border-slate-700 flex items-center justify-between">
+            <CatBadge cat={cat}/>
+            <span className="text-sm text-amber-400 font-semibold">{fmt(items.reduce((s,x)=>s+toMonthly(x.amt,x.freq),0))}/mo</span>
+          </div>
+          <table>
+            <thead><tr><th>Name</th><th>Amount</th><th>Frequency</th><th>Monthly</th><th></th></tr></thead>
+            <tbody>
+              {items.map(x=>(
+                <tr key={x.id}>
+                  <td className="font-medium">{x.name}</td>
+                  <td>{fmt(x.amt)}</td>
+                  <td><FreqLabel f={x.freq}/></td>
+                  <td className="text-amber-400 font-semibold">{fmt(toMonthly(x.amt,x.freq))}</td>
+                  <td>
+                    <div className="flex gap-2">
+                      <Btn size="sm" variant="ghost" onClick={()=>openEdit(x)}>Edit</Btn>
+                      <Btn size="sm" variant="danger" onClick={()=>del(x.id)}>Del</Btn>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
+      ))}
+
+      {showForm&&(
+        <Modal title={editing?'Edit Subscription':'Add Subscription'} onClose={()=>setShowForm(false)}>
+          <div className="space-y-4">
+            <div className="form-row cols2">
+              <div>
+                <label>Name</label>
+                <input placeholder="e.g. Netflix" value={form.name} onChange={e=>setForm(p=>({...p,name:e.target.value}))}/>
+              </div>
+              <div>
+                <label>Category</label>
+                <select value={form.cat} onChange={e=>setForm(p=>({...p,cat:e.target.value}))}>
+                  {SUB_CATS.map(c=><option key={c}>{c}</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="form-row cols2">
+              <div>
+                <label>Amount (£)</label>
+                <input type="number" placeholder="0.00" value={form.amt} onChange={e=>setForm(p=>({...p,amt:e.target.value}))}/>
+              </div>
+              <div>
+                <label>Frequency</label>
+                <select value={form.freq} onChange={e=>setForm(p=>({...p,freq:e.target.value}))}>
+                  {FREQS.map(f=><option key={f} value={f}>{f.charAt(0).toUpperCase()+f.slice(1)}</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="flex gap-3 pt-2">
+              <Btn onClick={save} className="flex-1">Save</Btn>
+              <Btn variant="ghost" onClick={()=>setShowForm(false)} className="flex-1">Cancel</Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// ── CREDIT CARDS ───────────────────────────────────────────────────────────
+function CreditCardsPage({members,cards,setCards,selectedPerson}) {
+  const [showForm,setShowForm]=useState(false);
+  const [editing,setEditing]=useState(null);
+  const blank={pid:'kuldip',name:'',limit:'',balance:'',apr:'',minPmt:''};
+  const [form,setForm]=useState(blank);
+
+  const openAdd=()=>{setEditing(null);setForm(blank);setShowForm(true);};
+  const openEdit=r=>{setEditing(r.id);setForm({pid:r.pid,name:r.name,limit:r.limit,balance:r.balance,apr:r.apr,minPmt:r.minPmt});setShowForm(true);};
+  const save=()=>{
+    if(!form.name) return;
+    const d={...form,limit:parseFloat(form.limit)||0,balance:parseFloat(form.balance)||0,apr:parseFloat(form.apr)||0,minPmt:parseFloat(form.minPmt)||0};
+    if(editing) setCards(p=>p.map(x=>x.id===editing?{...x,...d}:x));
+    else setCards(p=>[...p,{id:uid(),...d}]);
+    setShowForm(false);
+  };
+  const del=id=>setCards(p=>p.filter(x=>x.id!==id));
+  const getMember=id=>members.find(m=>m.id===id)||members[0];
+
+  const visible=selectedPerson==='all'?cards:cards.filter(x=>x.pid===selectedPerson);
+  const totalDebt=visible.reduce((s,x)=>s+x.balance,0);
+  const totalLimit=visible.reduce((s,x)=>s+x.limit,0);
+
+  return (
+    <div className="fade-in space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Credit Cards</h1>
+          <p className="text-slate-400 text-sm mt-1">Total debt: <span className="text-red-400 font-bold">{fmt(totalDebt)}</span> of <span className="text-slate-300">{fmt(totalLimit)}</span> limit</p>
+        </div>
+        <Btn onClick={openAdd}>+ Add Card</Btn>
+      </div>
+
+      {visible.length===0&&<EmptyState text="No credit cards added yet."/>}
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        {visible.map(c=>{
+          const m=getMember(c.pid);
+          const pct=c.limit>0?Math.min(100,(c.balance/c.limit)*100):0;
+          const available=Math.max(0,c.limit-c.balance);
+          const color=pct>80?'#ef4444':pct>50?'#f59e0b':'#10b981';
+          return (
+            <Card key={c.id} className="p-5 card-hover fade-in">
+              <div className="flex items-start justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <PersonAvatar member={m} size={10}/>
+                  <div>
+                    <div className="font-bold text-base">{c.name}</div>
+                    <Badge member={m}/>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <Btn size="sm" variant="ghost" onClick={()=>openEdit(c)}>Edit</Btn>
+                  <Btn size="sm" variant="danger" onClick={()=>del(c.id)}>Del</Btn>
+                </div>
+              </div>
+              <div className="space-y-3">
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-400">Balance</span>
+                  <span className="text-red-400 font-bold text-lg">{fmt(c.balance)}</span>
+                </div>
+                <div className="progress-track">
+                  <div className="progress-fill" style={{width:pct+'%',background:color}}/>
+                </div>
+                <div className="flex justify-between text-xs text-slate-500">
+                  <span>{pct.toFixed(0)}% used</span>
+                  <span>{fmt(available)} available</span>
+                </div>
+                <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-700">
+                  <div className="text-center">
+                    <div className="text-xs text-slate-500">Limit</div>
+                    <div className="text-sm font-semibold">{fmt(c.limit)}</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-xs text-slate-500">APR</div>
+                    <div className="text-sm font-semibold">{c.apr}%</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-xs text-slate-500">Min. Pmt</div>
+                    <div className="text-sm font-semibold">{fmt(c.minPmt)}</div>
+                  </div>
+                </div>
+              </div>
+            </Card>
+          );
+        })}
+      </div>
+
+      {showForm&&(
+        <Modal title={editing?'Edit Credit Card':'Add Credit Card'} onClose={()=>setShowForm(false)}>
+          <div className="space-y-4">
+            <div className="form-row cols2">
+              <div>
+                <label>Card Holder</label>
+                <select value={form.pid} onChange={e=>setForm(p=>({...p,pid:e.target.value}))}>
+                  {members.filter(m=>m.role!=='Shared').map(m=><option key={m.id} value={m.id}>{m.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label>Card Name</label>
+                <input placeholder="e.g. Barclaycard" value={form.name} onChange={e=>setForm(p=>({...p,name:e.target.value}))}/>
+              </div>
+            </div>
+            <div className="form-row cols2">
+              <div>
+                <label>Credit Limit (£)</label>
+                <input type="number" placeholder="5000" value={form.limit} onChange={e=>setForm(p=>({...p,limit:e.target.value}))}/>
+              </div>
+              <div>
+                <label>Outstanding Balance (£)</label>
+                <input type="number" placeholder="0.00" value={form.balance} onChange={e=>setForm(p=>({...p,balance:e.target.value}))}/>
+              </div>
+            </div>
+            <div className="form-row cols2">
+              <div>
+                <label>APR (%)</label>
+                <input type="number" placeholder="21.9" value={form.apr} onChange={e=>setForm(p=>({...p,apr:e.target.value}))}/>
+              </div>
+              <div>
+                <label>Minimum Payment (£)</label>
+                <input type="number" placeholder="25" value={form.minPmt} onChange={e=>setForm(p=>({...p,minPmt:e.target.value}))}/>
+              </div>
+            </div>
+            <div className="flex gap-3 pt-2">
+              <Btn onClick={save} className="flex-1">Save</Btn>
+              <Btn variant="ghost" onClick={()=>setShowForm(false)} className="flex-1">Cancel</Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// ── LOANS ──────────────────────────────────────────────────────────────────
+function LoansPage({members,loans,setLoans,selectedPerson}) {
+  const [showForm,setShowForm]=useState(false);
+  const [editing,setEditing]=useState(null);
+  const blank={pid:'kuldip',name:'',balance:'',monthlyPmt:'',rate:'',payoffDate:''};
+  const [form,setForm]=useState(blank);
+
+  const openAdd=()=>{setEditing(null);setForm(blank);setShowForm(true);};
+  const openEdit=r=>{setEditing(r.id);setForm({pid:r.pid,name:r.name,balance:r.balance,monthlyPmt:r.monthlyPmt,rate:r.rate,payoffDate:r.payoffDate||''});setShowForm(true);};
+  const save=()=>{
+    if(!form.name) return;
+    const d={...form,balance:parseFloat(form.balance)||0,monthlyPmt:parseFloat(form.monthlyPmt)||0,rate:parseFloat(form.rate)||0};
+    if(editing) setLoans(p=>p.map(x=>x.id===editing?{...x,...d}:x));
+    else setLoans(p=>[...p,{id:uid(),...d}]);
+    setShowForm(false);
+  };
+  const del=id=>setLoans(p=>p.filter(x=>x.id!==id));
+  const getMember=id=>members.find(m=>m.id===id)||members[0];
+
+  const visible=selectedPerson==='all'?loans:loans.filter(x=>x.pid===selectedPerson);
+  const totalDebt=visible.reduce((s,x)=>s+x.balance,0);
+  const totalPmt=visible.reduce((s,x)=>s+x.monthlyPmt,0);
+
+  const calcPayoff=(balance,pmt,rate)=>{
+    if(pmt<=0) return '—';
+    if(rate===0) return Math.ceil(balance/pmt)+' months';
+    const r=rate/100/12;
+    if(pmt<=balance*r) return 'Never (payment too low)';
+    const n=Math.ceil(-Math.log(1-balance*r/pmt)/Math.log(1+r));
+    const d=new Date(); d.setMonth(d.getMonth()+n);
+    return d.toLocaleDateString('en-GB',{month:'short',year:'numeric'})+` (${n} months)`;
+  };
+
+  return (
+    <div className="fade-in space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Loans</h1>
+          <p className="text-slate-400 text-sm mt-1">Total outstanding: <span className="text-red-400 font-bold">{fmt(totalDebt)}</span> · Monthly payments: <span className="text-amber-400">{fmt(totalPmt)}</span></p>
+        </div>
+        <Btn onClick={openAdd}>+ Add Loan</Btn>
+      </div>
+
+      {visible.length===0&&<EmptyState text="No loans added. Click '+ Add Loan' to track one."/>}
+
+      <div className="space-y-4">
+        {visible.map(l=>{
+          const m=getMember(l.pid);
+          const payoff=calcPayoff(l.balance,l.monthlyPmt,l.rate);
+          return (
+            <Card key={l.id} className="p-5 fade-in">
+              <div className="flex items-start justify-between">
+                <div className="flex items-center gap-3">
+                  <PersonAvatar member={m} size={10}/>
+                  <div>
+                    <div className="font-bold text-base">{l.name}</div>
+                    <Badge member={m}/>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <Btn size="sm" variant="ghost" onClick={()=>openEdit(l)}>Edit</Btn>
+                  <Btn size="sm" variant="danger" onClick={()=>del(l.id)}>Del</Btn>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-4 pt-4 border-t border-slate-700">
+                <div>
+                  <div className="text-xs text-slate-500">Outstanding</div>
+                  <div className="text-red-400 font-bold text-lg">{fmt(l.balance)}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500">Monthly Payment</div>
+                  <div className="font-bold">{fmt(l.monthlyPmt)}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500">Interest Rate</div>
+                  <div className="font-bold">{l.rate}%</div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500">Estimated Payoff</div>
+                  <div className="text-emerald-400 font-semibold text-sm">{payoff}</div>
+                </div>
+              </div>
+            </Card>
+          );
+        })}
+      </div>
+
+      {showForm&&(
+        <Modal title={editing?'Edit Loan':'Add Loan'} onClose={()=>setShowForm(false)}>
+          <div className="space-y-4">
+            <div className="form-row cols2">
+              <div>
+                <label>Person</label>
+                <select value={form.pid} onChange={e=>setForm(p=>({...p,pid:e.target.value}))}>
+                  {members.filter(m=>m.role!=='Shared').map(m=><option key={m.id} value={m.id}>{m.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label>Loan Name</label>
+                <input placeholder="e.g. Car Finance" value={form.name} onChange={e=>setForm(p=>({...p,name:e.target.value}))}/>
+              </div>
+            </div>
+            <div className="form-row cols2">
+              <div>
+                <label>Outstanding Balance (£)</label>
+                <input type="number" placeholder="0.00" value={form.balance} onChange={e=>setForm(p=>({...p,balance:e.target.value}))}/>
+              </div>
+              <div>
+                <label>Monthly Payment (£)</label>
+                <input type="number" placeholder="0.00" value={form.monthlyPmt} onChange={e=>setForm(p=>({...p,monthlyPmt:e.target.value}))}/>
+              </div>
+            </div>
+            <div className="form-row cols2">
+              <div>
+                <label>Interest Rate (%)</label>
+                <input type="number" placeholder="5.9" value={form.rate} onChange={e=>setForm(p=>({...p,rate:e.target.value}))}/>
+              </div>
+              <div>
+                <label>Payoff Date (optional)</label>
+                <input type="date" value={form.payoffDate} onChange={e=>setForm(p=>({...p,payoffDate:e.target.value}))}/>
+              </div>
+            </div>
+            <div className="flex gap-3 pt-2">
+              <Btn onClick={save} className="flex-1">Save</Btn>
+              <Btn variant="ghost" onClick={()=>setShowForm(false)} className="flex-1">Cancel</Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// ── SAVINGS & INVESTMENTS ─────────────────────────────────────────────────
+const SAVINGS_TYPES=['Cash ISA','Stocks & Shares ISA','Savings Account','Premium Bonds','Pension','Shares/ETFs','Crypto','Property','Other'];
+
+function SavingsPage({members,savings,setSavings,selectedPerson}) {
+  const [showForm,setShowForm]=useState(false);
+  const [editing,setEditing]=useState(null);
+  const blank={pid:'kuldip',name:'',type:'Savings Account',balance:'',monthlyContrib:'',target:''};
+  const [form,setForm]=useState(blank);
+
+  const openAdd=()=>{setEditing(null);setForm(blank);setShowForm(true);};
+  const openEdit=r=>{setEditing(r.id);setForm({pid:r.pid,name:r.name,type:r.type,balance:r.balance,monthlyContrib:r.monthlyContrib,target:r.target||''});setShowForm(true);};
+  const save=()=>{
+    if(!form.name) return;
+    const d={...form,balance:parseFloat(form.balance)||0,monthlyContrib:parseFloat(form.monthlyContrib)||0,target:parseFloat(form.target)||0};
+    if(editing) setSavings(p=>p.map(x=>x.id===editing?{...x,...d}:x));
+    else setSavings(p=>[...p,{id:uid(),...d}]);
+    setShowForm(false);
+  };
+  const del=id=>setSavings(p=>p.filter(x=>x.id!==id));
+  const getMember=id=>members.find(m=>m.id===id)||members[0];
+
+  const visible=selectedPerson==='all'?savings:savings.filter(x=>x.pid===selectedPerson);
+  const totalBalance=visible.reduce((s,x)=>s+x.balance,0);
+  const totalMonthly=visible.reduce((s,x)=>s+x.monthlyContrib,0);
+
+  return (
+    <div className="fade-in space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Savings & Investments</h1>
+          <p className="text-slate-400 text-sm mt-1">Total value: <span className="text-emerald-400 font-bold">{fmt(totalBalance)}</span> · Saving: <span className="text-blue-400">{fmt(totalMonthly)}/mo</span></p>
+        </div>
+        <Btn onClick={openAdd}>+ Add Account</Btn>
+      </div>
+
+      {visible.length===0&&<EmptyState text="No savings or investment accounts added yet."/>}
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        {visible.map(s=>{
+          const m=getMember(s.pid);
+          const pct=s.target>0?Math.min(100,(s.balance/s.target)*100):null;
+          return (
+            <Card key={s.id} className="p-5 card-hover fade-in">
+              <div className="flex items-start justify-between mb-3">
+                <div className="flex items-center gap-3">
+                  <PersonAvatar member={m}/>
+                  <div>
+                    <div className="font-bold">{s.name}</div>
+                    <div className="flex gap-2 mt-1">
+                      <Badge member={m}/>
+                      <CatBadge cat={s.type}/>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <Btn size="sm" variant="ghost" onClick={()=>openEdit(s)}>Edit</Btn>
+                  <Btn size="sm" variant="danger" onClick={()=>del(s.id)}>Del</Btn>
+                </div>
+              </div>
+              <div className="text-2xl font-bold text-emerald-400 mb-1">{fmt(s.balance)}</div>
+              {s.monthlyContrib>0&&<div className="text-sm text-slate-400">Contributing {fmt(s.monthlyContrib)}/mo</div>}
+              {pct!==null&&(
+                <div className="mt-3">
+                  <div className="flex justify-between text-xs text-slate-500 mb-1">
+                    <span>Progress to {fmt(s.target)}</span>
+                    <span>{pct.toFixed(0)}%</span>
+                  </div>
+                  <div className="progress-track">
+                    <div className="progress-fill bg-emerald-500" style={{width:pct+'%'}}/>
+                  </div>
+                </div>
+              )}
+            </Card>
+          );
+        })}
+      </div>
+
+      {showForm&&(
+        <Modal title={editing?'Edit Account':'Add Account'} onClose={()=>setShowForm(false)}>
+          <div className="space-y-4">
+            <div className="form-row cols2">
+              <div>
+                <label>Person</label>
+                <select value={form.pid} onChange={e=>setForm(p=>({...p,pid:e.target.value}))}>
+                  {members.filter(m=>m.role!=='Shared').map(m=><option key={m.id} value={m.id}>{m.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label>Account Type</label>
+                <select value={form.type} onChange={e=>setForm(p=>({...p,type:e.target.value}))}>
+                  {SAVINGS_TYPES.map(t=><option key={t}>{t}</option>)}
+                </select>
+              </div>
+            </div>
+            <div>
+              <label>Account Name</label>
+              <input placeholder="e.g. Vanguard ISA" value={form.name} onChange={e=>setForm(p=>({...p,name:e.target.value}))}/>
+            </div>
+            <div className="form-row cols3">
+              <div>
+                <label>Current Balance (£)</label>
+                <input type="number" placeholder="0.00" value={form.balance} onChange={e=>setForm(p=>({...p,balance:e.target.value}))}/>
+              </div>
+              <div>
+                <label>Monthly Contribution (£)</label>
+                <input type="number" placeholder="0.00" value={form.monthlyContrib} onChange={e=>setForm(p=>({...p,monthlyContrib:e.target.value}))}/>
+              </div>
+              <div>
+                <label>Target (£, optional)</label>
+                <input type="number" placeholder="0.00" value={form.target} onChange={e=>setForm(p=>({...p,target:e.target.value}))}/>
+              </div>
+            </div>
+            <div className="flex gap-3 pt-2">
+              <Btn onClick={save} className="flex-1">Save</Btn>
+              <Btn variant="ghost" onClick={()=>setShowForm(false)} className="flex-1">Cancel</Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// ── EMERGENCY FUND ─────────────────────────────────────────────────────────
+function EmergencyPage({funds,setFunds,monthlyOutflow}) {
+  const [showForm,setShowForm]=useState(false);
+  const [editing,setEditing]=useState(null);
+  const blank={name:'Emergency Fund',target:'',balance:'',monthlyContrib:''};
+  const [form,setForm]=useState(blank);
+
+  const openAdd=()=>{setEditing(null);setForm(blank);setShowForm(true);};
+  const openEdit=r=>{setEditing(r.id);setForm({name:r.name,target:r.target,balance:r.balance,monthlyContrib:r.monthlyContrib});setShowForm(true);};
+  const save=()=>{
+    const d={...form,target:parseFloat(form.target)||0,balance:parseFloat(form.balance)||0,monthlyContrib:parseFloat(form.monthlyContrib)||0};
+    if(editing) setFunds(p=>p.map(x=>x.id===editing?{...x,...d}:x));
+    else setFunds(p=>[...p,{id:uid(),...d}]);
+    setShowForm(false);
+  };
+  const del=id=>setFunds(p=>p.filter(x=>x.id!==id));
+
+  const totalBalance=funds.reduce((s,f)=>s+f.balance,0);
+  const monthsCovered=monthlyOutflow>0?totalBalance/monthlyOutflow:0;
+  const health=monthsCovered>=6?'excellent':monthsCovered>=3?'good':monthsCovered>=1?'low':'critical';
+  const healthColor={excellent:'emerald',good:'blue',low:'amber',critical:'red'}[health];
+  const healthLabel={excellent:'Excellent (6+ months)',good:'Good (3–6 months)',low:'Below Recommended (<3 months)',critical:'Critical — Build Immediately!'}[health];
+
+  return (
+    <div className="fade-in space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Emergency Fund</h1>
+          <p className="text-slate-400 text-sm mt-1">Based on monthly outflow of {fmt(monthlyOutflow)}</p>
+        </div>
+        <Btn onClick={openAdd}>+ Add Fund</Btn>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <StatCard label="Total Balance" value={fmt(totalBalance)} color="green" icon="🏦"/>
+        <StatCard label="Months Covered" value={monthsCovered.toFixed(1)+'mo'} sub="Recommended: 3–6 months" color={healthColor} icon="🛡️"/>
+        <div className="stat-card">
+          <div className="text-sm text-slate-400 mb-2">Health Status</div>
+          <div className={`text-${healthColor}-400 font-bold text-base`}>{healthLabel}</div>
+          <div className="progress-track mt-3">
+            <div className="progress-fill" style={{width:Math.min(100,monthsCovered/6*100)+'%',background:healthColor==='emerald'?'#10b981':healthColor==='blue'?'#3b82f6':healthColor==='amber'?'#f59e0b':'#ef4444'}}/>
+          </div>
+          <div className="text-xs text-slate-500 mt-1">{Math.min(100,Math.round(monthsCovered/6*100))}% of 6-month goal</div>
+        </div>
+      </div>
+
+      {funds.length===0&&<EmptyState text="No emergency fund tracked yet. Add one to get started."/>}
+
+      <div className="space-y-4">
+        {funds.map(f=>{
+          const pct=f.target>0?Math.min(100,(f.balance/f.target)*100):0;
+          const mCovered=monthlyOutflow>0?f.balance/monthlyOutflow:0;
+          const monthsToTarget=f.monthlyContrib>0&&f.balance<f.target?Math.ceil((f.target-f.balance)/f.monthlyContrib):0;
+          return (
+            <Card key={f.id} className="p-5 fade-in">
+              <div className="flex items-start justify-between mb-4">
+                <div>
+                  <div className="font-bold text-lg">{f.name}</div>
+                  <div className="text-sm text-slate-400">{mCovered.toFixed(1)} months of expenses covered</div>
+                </div>
+                <div className="flex gap-2">
+                  <Btn size="sm" variant="ghost" onClick={()=>openEdit(f)}>Edit</Btn>
+                  <Btn size="sm" variant="danger" onClick={()=>del(f.id)}>Del</Btn>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
+                <div><div className="text-xs text-slate-500">Current Balance</div><div className="font-bold text-emerald-400 text-lg">{fmt(f.balance)}</div></div>
+                <div><div className="text-xs text-slate-500">Target</div><div className="font-bold">{fmt(f.target)}</div></div>
+                <div><div className="text-xs text-slate-500">Monthly Contribution</div><div className="font-bold text-blue-400">{fmt(f.monthlyContrib)}</div></div>
+                <div><div className="text-xs text-slate-500">Months to Target</div><div className="font-bold">{monthsToTarget>0?monthsToTarget+'mo':'—'}</div></div>
+              </div>
+              {f.target>0&&(
+                <>
+                  <div className="flex justify-between text-xs text-slate-500 mb-1">
+                    <span>Progress</span><span>{pct.toFixed(0)}%</span>
+                  </div>
+                  <div className="progress-track"><div className="progress-fill bg-emerald-500" style={{width:pct+'%'}}/></div>
+                </>
+              )}
+              {mCovered<3&&<div className="mt-3 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-sm text-amber-400">⚠️ Below the recommended 3-month threshold. Consider increasing contributions.</div>}
+            </Card>
+          );
+        })}
+      </div>
+
+      {showForm&&(
+        <Modal title={editing?'Edit Emergency Fund':'Add Emergency Fund'} onClose={()=>setShowForm(false)}>
+          <div className="space-y-4">
+            <div>
+              <label>Fund Name</label>
+              <input placeholder="Emergency Fund" value={form.name} onChange={e=>setForm(p=>({...p,name:e.target.value}))}/>
+            </div>
+            <div className="form-row cols2">
+              <div>
+                <label>Current Balance (£)</label>
+                <input type="number" placeholder="0.00" value={form.balance} onChange={e=>setForm(p=>({...p,balance:e.target.value}))}/>
+              </div>
+              <div>
+                <label>Target (£)</label>
+                <input type="number" placeholder="0.00" value={form.target} onChange={e=>setForm(p=>({...p,target:e.target.value}))}/>
+              </div>
+            </div>
+            <div>
+              <label>Monthly Contribution (£)</label>
+              <input type="number" placeholder="0.00" value={form.monthlyContrib} onChange={e=>setForm(p=>({...p,monthlyContrib:e.target.value}))}/>
+            </div>
+            {monthlyOutflow>0&&<div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg text-sm text-blue-300">💡 A 3–6 month emergency fund for your household = {fmt(monthlyOutflow*3)} – {fmt(monthlyOutflow*6)}</div>}
+            <div className="flex gap-3 pt-2">
+              <Btn onClick={save} className="flex-1">Save</Btn>
+              <Btn variant="ghost" onClick={()=>setShowForm(false)} className="flex-1">Cancel</Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// ── RETIREMENT PLANNER ─────────────────────────────────────────────────────
+function RetirementPage({members,goals,setGoals}) {
+  const [showForm,setShowForm]=useState(false);
+  const [editing,setEditing]=useState(null);
+  const blank={pid:'kuldip',currentAge:'',retirementAge:'',target:'',currentSavings:'',monthlyContrib:'',expectedReturn:'7'};
+  const [form,setForm]=useState(blank);
+
+  const openAdd=()=>{setEditing(null);setForm(blank);setShowForm(true);};
+  const openEdit=r=>{setEditing(r.id);setForm({pid:r.pid,currentAge:r.currentAge,retirementAge:r.retirementAge,target:r.target,currentSavings:r.currentSavings,monthlyContrib:r.monthlyContrib,expectedReturn:r.expectedReturn});setShowForm(true);};
+  const save=()=>{
+    const d={...form,currentAge:parseInt(form.currentAge)||0,retirementAge:parseInt(form.retirementAge)||65,target:parseFloat(form.target)||0,currentSavings:parseFloat(form.currentSavings)||0,monthlyContrib:parseFloat(form.monthlyContrib)||0,expectedReturn:parseFloat(form.expectedReturn)||7};
+    if(editing) setGoals(p=>p.map(x=>x.id===editing?{...x,...d}:x));
+    else setGoals(p=>[...p,{id:uid(),...d}]);
+    setShowForm(false);
+  };
+  const del=id=>setGoals(p=>p.filter(x=>x.id!==id));
+  const getMember=id=>members.find(m=>m.id===id)||members[0];
+
+  const scenarios=[5,7,10];
+
+  return (
+    <div className="fade-in space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold">Retirement Planner</h1>
+        <Btn onClick={openAdd}>+ Add Goal</Btn>
+      </div>
+
+      {goals.length===0&&<EmptyState text="No retirement goals set yet. Add one to see your projected portfolio."/>}
+
+      {goals.map(g=>{
+        const m=getMember(g.pid);
+        const years=Math.max(0,g.retirementAge-g.currentAge);
+        const projected=calcFV(g.currentSavings,g.monthlyContrib,g.expectedReturn/100,years);
+        const gap=g.target>0?g.target-projected:0;
+        const pct=g.target>0?Math.min(100,projected/g.target*100):100;
+
+        return (
+          <Card key={g.id} className="p-6 fade-in">
+            <div className="flex items-start justify-between mb-6">
+              <div className="flex items-center gap-3">
+                <PersonAvatar member={m} size={10}/>
+                <div>
+                  <div className="font-bold text-lg">{m.name}'s Retirement</div>
+                  <div className="text-slate-400 text-sm">Age {g.currentAge} → {g.retirementAge} · {years} years to go</div>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <Btn size="sm" variant="ghost" onClick={()=>openEdit(g)}>Edit</Btn>
+                <Btn size="sm" variant="danger" onClick={()=>del(g.id)}>Del</Btn>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+              <div><div className="text-xs text-slate-500">Current Savings</div><div className="text-blue-400 font-bold text-lg">{fmtK(g.currentSavings)}</div></div>
+              <div><div className="text-xs text-slate-500">Monthly Contribution</div><div className="font-bold text-lg">{fmt(g.monthlyContrib)}</div></div>
+              <div><div className="text-xs text-slate-500">Target</div><div className="font-bold text-lg">{fmtK(g.target)}</div></div>
+              <div><div className="text-xs text-slate-500">Projected ({g.expectedReturn}%)</div><div className={`font-bold text-lg ${projected>=g.target?'text-emerald-400':'text-amber-400'}`}>{fmtK(projected)}</div></div>
+            </div>
+
+            {g.target>0&&(
+              <div className="mb-6">
+                <div className="flex justify-between text-xs text-slate-500 mb-1">
+                  <span>Projected vs Target</span>
+                  <span>{pct.toFixed(0)}%</span>
+                </div>
+                <div className="progress-track h-3">
+                  <div className="progress-fill" style={{width:pct+'%',background:pct>=100?'#10b981':pct>=70?'#3b82f6':'#f59e0b'}}/>
+                </div>
+                {gap>0&&<p className="text-sm text-amber-400 mt-2">⚠️ Shortfall of {fmtK(gap)} at {g.expectedReturn}% return. Consider increasing contributions.</p>}
+                {gap<=0&&<p className="text-sm text-emerald-400 mt-2">✅ On track to meet your target!</p>}
+              </div>
+            )}
+
+            <div>
+              <h4 className="text-sm font-semibold text-slate-400 mb-3">Scenario Comparison at Retirement</h4>
+              <div className="overflow-x-auto">
+                <table>
+                  <thead><tr>
+                    <th>Return Rate</th>
+                    <th>Projected Value</th>
+                    <th>vs Target</th>
+                    <th>Required Monthly (to hit target)</th>
+                  </tr></thead>
+                  <tbody>
+                    {scenarios.map(r=>{
+                      const pv=calcFV(g.currentSavings,g.monthlyContrib,r/100,years);
+                      const req=g.target>0?requiredPMT(g.currentSavings,g.target,r/100,years):0;
+                      const diff=g.target>0?pv-g.target:0;
+                      return (
+                        <tr key={r} className={r===g.expectedReturn?'bg-blue-500/10':''}>
+                          <td className="font-semibold">{r}% {r===g.expectedReturn&&<span className="chip text-xs ml-1" style={{background:'#1d4ed8',color:'#93c5fd'}}>selected</span>}</td>
+                          <td className="font-bold text-emerald-400">{fmtK(pv)}</td>
+                          <td className={diff>=0?'text-emerald-400':'text-red-400'}>{diff>=0?'+':''}{fmtK(diff)}</td>
+                          <td className="text-blue-300">{g.target>0?fmt(req)+'/mo':'—'}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </Card>
+        );
+      })}
+
+      {showForm&&(
+        <Modal title={editing?'Edit Retirement Goal':'Add Retirement Goal'} onClose={()=>setShowForm(false)} wide>
+          <div className="space-y-4">
+            <div>
+              <label>Person</label>
+              <select value={form.pid} onChange={e=>setForm(p=>({...p,pid:e.target.value}))}>
+                {members.filter(m=>m.role!=='Shared').map(m=><option key={m.id} value={m.id}>{m.name}</option>)}
+              </select>
+            </div>
+            <div className="form-row cols2">
+              <div>
+                <label>Current Age</label>
+                <input type="number" placeholder="35" value={form.currentAge} onChange={e=>setForm(p=>({...p,currentAge:e.target.value}))}/>
+              </div>
+              <div>
+                <label>Retirement Age</label>
+                <input type="number" placeholder="65" value={form.retirementAge} onChange={e=>setForm(p=>({...p,retirementAge:e.target.value}))}/>
+              </div>
+            </div>
+            <div className="form-row cols2">
+              <div>
+                <label>Current Savings (£)</label>
+                <input type="number" placeholder="50000" value={form.currentSavings} onChange={e=>setForm(p=>({...p,currentSavings:e.target.value}))}/>
+              </div>
+              <div>
+                <label>Target Amount (£)</label>
+                <input type="number" placeholder="500000" value={form.target} onChange={e=>setForm(p=>({...p,target:e.target.value}))}/>
+              </div>
+            </div>
+            <div className="form-row cols2">
+              <div>
+                <label>Monthly Contribution (£)</label>
+                <input type="number" placeholder="500" value={form.monthlyContrib} onChange={e=>setForm(p=>({...p,monthlyContrib:e.target.value}))}/>
+              </div>
+              <div>
+                <label>Expected Annual Return (%)</label>
+                <input type="number" placeholder="7" value={form.expectedReturn} onChange={e=>setForm(p=>({...p,expectedReturn:e.target.value}))}/>
+              </div>
+            </div>
+            <div className="flex gap-3 pt-2">
+              <Btn onClick={save} className="flex-1">Save</Btn>
+              <Btn variant="ghost" onClick={()=>setShowForm(false)} className="flex-1">Cancel</Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// ── TRIPS ──────────────────────────────────────────────────────────────────
+function TripsPage({trips,setTrips,income}) {
+  const [showForm,setShowForm]=useState(false);
+  const [editing,setEditing]=useState(null);
+  const blank={name:'',destination:'',date:'',totalCost:'',currentSavings:'',monthlyContrib:''};
+  const [form,setForm]=useState(blank);
+
+  const openAdd=()=>{setEditing(null);setForm(blank);setShowForm(true);};
+  const openEdit=r=>{setEditing(r.id);setForm({name:r.name,destination:r.destination||'',date:r.date,totalCost:r.totalCost,currentSavings:r.currentSavings,monthlyContrib:r.monthlyContrib});setShowForm(true);};
+  const save=()=>{
+    if(!form.name) return;
+    const d={...form,totalCost:parseFloat(form.totalCost)||0,currentSavings:parseFloat(form.currentSavings)||0,monthlyContrib:parseFloat(form.monthlyContrib)||0};
+    if(editing) setTrips(p=>p.map(x=>x.id===editing?{...x,...d}:x));
+    else setTrips(p=>[...p,{id:uid(),...d}]);
+    setShowForm(false);
+  };
+  const del=id=>setTrips(p=>p.filter(x=>x.id!==id));
+
+  const monthlyIncome=income.reduce((s,x)=>s+toMonthly(x.amt,x.freq),0);
+
+  return (
+    <div className="fade-in space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold">Trip Savings</h1>
+        <Btn onClick={openAdd}>+ Add Trip</Btn>
+      </div>
+
+      {trips.length===0&&<EmptyState text="No trips planned yet. Add one to start saving!"/>}
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        {trips.map(t=>{
+          const months=monthsUntil(t.date);
+          const needed=Math.max(0,t.totalCost-t.currentSavings);
+          const neededMonthly=months>0?needed/months:needed;
+          const neededWeekly=months>0?needed/(months*52/12):needed/4;
+          const onTrack=t.monthlyContrib>=neededMonthly;
+          const shortfall=Math.max(0,neededMonthly-t.monthlyContrib);
+          const pct=t.totalCost>0?Math.min(100,t.currentSavings/t.totalCost*100):0;
+          const tripDate=t.date?new Date(t.date).toLocaleDateString('en-GB',{month:'long',year:'numeric'}):'No date set';
+          return (
+            <Card key={t.id} className="p-5 fade-in">
+              <div className="flex items-start justify-between mb-3">
+                <div>
+                  <div className="font-bold text-lg">✈️ {t.name}</div>
+                  {t.destination&&<div className="text-slate-400 text-sm">📍 {t.destination}</div>}
+                  <div className="text-slate-500 text-xs mt-1">📅 {tripDate}{months>0?` · ${months} months away`:''}</div>
+                </div>
+                <div className="flex gap-2">
+                  <Btn size="sm" variant="ghost" onClick={()=>openEdit(t)}>Edit</Btn>
+                  <Btn size="sm" variant="danger" onClick={()=>del(t.id)}>Del</Btn>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                <div><div className="text-xs text-slate-500">Trip Cost</div><div className="font-bold text-lg">{fmt(t.totalCost)}</div></div>
+                <div><div className="text-xs text-slate-500">Saved So Far</div><div className="text-emerald-400 font-bold text-lg">{fmt(t.currentSavings)}</div></div>
+              </div>
+
+              {t.totalCost>0&&(
+                <div className="mb-4">
+                  <div className="flex justify-between text-xs text-slate-500 mb-1">
+                    <span>Saved</span><span>{pct.toFixed(0)}%</span>
+                  </div>
+                  <div className="progress-track"><div className="progress-fill" style={{width:pct+'%',background:pct>=100?'#10b981':'#3b82f6'}}/></div>
+                </div>
+              )}
+
+              <div className="bg-slate-900 rounded-xl p-4 space-y-2">
+                <div className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">💡 Savings Recommendation</div>
+                {months>0?(
+                  <>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-slate-400">Save per month</span>
+                      <span className="font-bold text-blue-400">{fmt(neededMonthly)}/mo</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-slate-400">Save per week</span>
+                      <span className="font-bold text-blue-300">{fmt(neededWeekly)}/wk</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-slate-400">Your current saving</span>
+                      <span className={`font-bold ${onTrack?'text-emerald-400':'text-amber-400'}`}>{fmt(t.monthlyContrib)}/mo</span>
+                    </div>
+                    {onTrack
+                      ?<div className="text-xs text-emerald-400 mt-2 p-2 bg-emerald-500/10 rounded-lg">✅ On track! You'll reach your goal before the trip.</div>
+                      :<div className="text-xs text-red-400 mt-2 p-2 bg-red-500/10 rounded-lg">⚠️ Shortfall of {fmt(shortfall)}/mo. Increase savings or reduce trip budget.</div>
+                    }
+                  </>
+                ):(
+                  <div className="text-sm text-slate-500">Set a trip date to see savings recommendations.</div>
+                )}
+              </div>
+            </Card>
+          );
+        })}
+      </div>
+
+      {showForm&&(
+        <Modal title={editing?'Edit Trip':'Add Trip'} onClose={()=>setShowForm(false)}>
+          <div className="space-y-4">
+            <div className="form-row cols2">
+              <div>
+                <label>Trip Name</label>
+                <input placeholder="e.g. Family Holiday" value={form.name} onChange={e=>setForm(p=>({...p,name:e.target.value}))}/>
+              </div>
+              <div>
+                <label>Destination</label>
+                <input placeholder="e.g. Maldives" value={form.destination} onChange={e=>setForm(p=>({...p,destination:e.target.value}))}/>
+              </div>
+            </div>
+            <div>
+              <label>Trip Date</label>
+              <input type="date" value={form.date} onChange={e=>setForm(p=>({...p,date:e.target.value}))}/>
+            </div>
+            <div className="form-row cols3">
+              <div>
+                <label>Total Cost (£)</label>
+                <input type="number" placeholder="5000" value={form.totalCost} onChange={e=>setForm(p=>({...p,totalCost:e.target.value}))}/>
+              </div>
+              <div>
+                <label>Already Saved (£)</label>
+                <input type="number" placeholder="0" value={form.currentSavings} onChange={e=>setForm(p=>({...p,currentSavings:e.target.value}))}/>
+              </div>
+              <div>
+                <label>Saving/mo (£)</label>
+                <input type="number" placeholder="200" value={form.monthlyContrib} onChange={e=>setForm(p=>({...p,monthlyContrib:e.target.value}))}/>
+              </div>
+            </div>
+            <div className="flex gap-3 pt-2">
+              <Btn onClick={save} className="flex-1">Save</Btn>
+              <Btn variant="ghost" onClick={()=>setShowForm(false)} className="flex-1">Cancel</Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// ── FAMILY MEMBERS PAGE ───────────────────────────────────────────────────
+function FamilyPage({members,setMembers}) {
+  const [showForm,setShowForm]=useState(false);
+  const [editing,setEditing]=useState(null);
+  const blank={name:'',initials:'',color:'#3b82f6',role:'Parent'};
+  const [form,setForm]=useState(blank);
+  const COLORS_PRESET=['#3b82f6','#ec4899','#10b981','#f59e0b','#8b5cf6','#f97316','#06b6d4','#6366f1','#ef4444','#64748b'];
+
+  const openAdd=()=>{setEditing(null);setForm(blank);setShowForm(true);};
+  const openEdit=m=>{setEditing(m.id);setForm({name:m.name,initials:m.initials,color:m.color,role:m.role});setShowForm(true);};
+  const save=()=>{
+    if(!form.name) return;
+    if(editing) setMembers(p=>p.map(x=>x.id===editing?{...x,...form}:x));
+    else setMembers(p=>[...p,{id:uid(),...form}]);
+    setShowForm(false);
+  };
+  const del=id=>setMembers(p=>p.filter(x=>x.id!==id&&x.id!=='household'));
+
+  return (
+    <div className="fade-in space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold">Family Members</h1>
+        <Btn onClick={openAdd}>+ Add Member</Btn>
+      </div>
+      <div className="grid gap-4 sm:grid-cols-3">
+        {members.map(m=>(
+          <Card key={m.id} className="p-5 flex items-center gap-4 card-hover fade-in">
+            <div className="w-14 h-14 rounded-full flex items-center justify-center text-xl font-bold flex-shrink-0" style={{background:m.color+'33',color:m.color}}>{m.initials}</div>
+            <div className="flex-1">
+              <div className="font-bold text-lg">{m.name}</div>
+              <div className="text-sm text-slate-400">{m.role}</div>
+            </div>
+            {m.id!=='household'&&(
+              <div className="flex flex-col gap-1">
+                <Btn size="sm" variant="ghost" onClick={()=>openEdit(m)}>Edit</Btn>
+                {!['kuldip','jasleen'].includes(m.id)&&<Btn size="sm" variant="danger" onClick={()=>del(m.id)}>Del</Btn>}
+              </div>
+            )}
+          </Card>
+        ))}
+      </div>
+      {showForm&&(
+        <Modal title={editing?'Edit Member':'Add Family Member'} onClose={()=>setShowForm(false)}>
+          <div className="space-y-4">
+            <div className="form-row cols2">
+              <div>
+                <label>Name</label>
+                <input placeholder="Name" value={form.name} onChange={e=>setForm(p=>({...p,name:e.target.value}))}/>
+              </div>
+              <div>
+                <label>Initials</label>
+                <input placeholder="AB" maxLength={2} value={form.initials} onChange={e=>setForm(p=>({...p,initials:e.target.value.toUpperCase()}))}/>
+              </div>
+            </div>
+            <div>
+              <label>Role</label>
+              <select value={form.role} onChange={e=>setForm(p=>({...p,role:e.target.value}))}>
+                <option>Parent</option><option>Child</option><option>Other</option>
+              </select>
+            </div>
+            <div>
+              <label>Colour</label>
+              <div className="flex gap-2 flex-wrap mt-2">
+                {COLORS_PRESET.map(c=>(
+                  <button key={c} onClick={()=>setForm(p=>({...p,color:c}))}
+                    className="w-8 h-8 rounded-full border-2 transition-all"
+                    style={{background:c,borderColor:form.color===c?'white':'transparent'}}/>
+                ))}
+              </div>
+            </div>
+            <div className="flex gap-3 pt-2">
+              <Btn onClick={save} className="flex-1">Save</Btn>
+              <Btn variant="ghost" onClick={()=>setShowForm(false)} className="flex-1">Cancel</Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// ── DASHBOARD ─────────────────────────────────────────────────────────────
+function Dashboard({members,income,bills,subs,cards,loans,savings,funds,trips,selectedPerson}) {
+  const getMember=id=>members.find(m=>m.id===id)||members[members.length-1];
+
+  const filterByPerson = arr => selectedPerson==='all'?arr:arr.filter(x=>x.pid===selectedPerson||(x.pid==='household'&&selectedPerson!=='all'));
+
+  const monthlyIncome = filterByPerson(income).reduce((s,x)=>s+toMonthly(x.amt,x.freq),0);
+  const monthlyBills  = filterByPerson(bills).reduce((s,x)=>s+toMonthly(x.amt,x.freq),0);
+  const monthlySubs   = subs.reduce((s,x)=>s+toMonthly(x.amt,x.freq),0);
+  const monthlyLoans  = filterByPerson(loans).reduce((s,x)=>s+x.monthlyPmt,0);
+  const monthlyCards  = filterByPerson(cards).reduce((s,x)=>s+x.minPmt,0);
+  const totalOutflow  = monthlyBills+monthlySubs+monthlyLoans+monthlyCards;
+  const netFlow       = monthlyIncome-totalOutflow;
+  const totalDebt     = [...filterByPerson(cards),...filterByPerson(loans)].reduce((s,x)=>s+(x.balance||0),0);
+  const totalSavings  = filterByPerson(savings).reduce((s,x)=>s+x.balance,0);
+  const efBalance     = funds.reduce((s,f)=>s+f.balance,0);
+  const efMonths      = totalOutflow>0?efBalance/totalOutflow:0;
+
+  const cashFlowData = [
+    {name:'Income',value:monthlyIncome,fill:'#10b981'},
+    {name:'Bills',value:monthlyBills,fill:'#ef4444'},
+    {name:'Subs',value:monthlySubs,fill:'#f59e0b'},
+    {name:'Loans',value:monthlyLoans,fill:'#8b5cf6'},
+    {name:'Cards',value:monthlyCards,fill:'#ec4899'},
+  ].filter(d=>d.value>0);
+
+  const pieData=cashFlowData.filter(d=>d.name!=='Income');
+
+  const personBreakdown=members.filter(m=>m.role!=='Shared'&&(selectedPerson==='all'||m.id===selectedPerson)).map(m=>{
+    const mIncome=income.filter(x=>x.pid===m.id).reduce((s,x)=>s+toMonthly(x.amt,x.freq),0);
+    const mBills=bills.filter(x=>x.pid===m.id).reduce((s,x)=>s+toMonthly(x.amt,x.freq),0);
+    const hBills=bills.filter(x=>x.pid==='household').reduce((s,x)=>s+toMonthly(x.amt,x.freq),0)/members.filter(m2=>m2.role==='Parent').length;
+    return {member:m,income:mIncome,bills:mBills+(m.role==='Parent'?hBills:0)};
+  }).filter(x=>x.income>0||x.bills>0);
+
+  const upcomingTrips=trips.filter(t=>monthsUntil(t.date)>0).sort((a,b)=>new Date(a.date)-new Date(b.date)).slice(0,3);
+
+  return (
+    <div className="fade-in space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold">Dashboard</h1>
+        <p className="text-slate-400 text-sm mt-1">Kudhail Family Finance Overview · {new Date().toLocaleDateString('en-GB',{month:'long',year:'numeric'})}</p>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        <StatCard label="Monthly Income"    value={fmt(monthlyIncome)}  color="green"  icon="💰"/>
+        <StatCard label="Monthly Outflow"   value={fmt(totalOutflow)}   color="red"    icon="📤"/>
+        <StatCard label="Net Cash Flow"     value={(netFlow>=0?'+':'')+fmt(netFlow)} color={netFlow>=0?'green':'red'} icon="📊"/>
+        <StatCard label="Yearly Income"     value={fmtK(monthlyIncome*12)} color="green" icon="📈"/>
+        <StatCard label="Emergency Fund"    value={efMonths.toFixed(1)+'mo'} sub={fmt(efBalance)} color={efMonths>=3?'green':'amber'} icon="🛡️"/>
+        <StatCard label="Total Debt"        value={fmtK(totalDebt)}     color={totalDebt>0?'red':'green'} icon="💳"/>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card className="p-5">
+          <h3 className="font-semibold mb-1">Cash Flow Breakdown</h3>
+          <p className="text-xs text-slate-500 mb-4">Monthly income vs expenses</p>
+          <div className="space-y-3">
+            <div>
+              <div className="flex justify-between text-sm mb-1">
+                <span className="text-slate-400">Income</span>
+                <span className="text-emerald-400 font-bold">{fmt(monthlyIncome)}</span>
+              </div>
+              <div className="progress-track">
+                <div className="progress-fill bg-emerald-500" style={{width:'100%'}}/>
+              </div>
+            </div>
+            {[
+              {label:'Bills',value:monthlyBills,color:'#ef4444'},
+              {label:'Subscriptions',value:monthlySubs,color:'#f59e0b'},
+              {label:'Loan Payments',value:monthlyLoans,color:'#8b5cf6'},
+              {label:'Credit Card Min.',value:monthlyCards,color:'#ec4899'},
+            ].filter(x=>x.value>0).map(x=>(
+              <div key={x.label}>
+                <div className="flex justify-between text-sm mb-1">
+                  <span className="text-slate-400">{x.label}</span>
+                  <span className="font-semibold" style={{color:x.color}}>{fmt(x.value)}</span>
+                </div>
+                <div className="progress-track">
+                  <div className="progress-fill" style={{width:monthlyIncome>0?Math.min(100,x.value/monthlyIncome*100)+'%':'0%',background:x.color}}/>
+                </div>
+              </div>
+            ))}
+            <div className="pt-3 border-t border-slate-700">
+              <div className="flex justify-between">
+                <span className="font-semibold">Net Cash Flow</span>
+                <span className={`font-bold text-lg ${netFlow>=0?'text-emerald-400':'text-red-400'}`}>{netFlow>=0?'+':''}{fmt(netFlow)}/mo</span>
+              </div>
+              {netFlow>=0&&<p className="text-xs text-slate-500 mt-1">≈ {fmt(netFlow*12)}/year surplus</p>}
+            </div>
+          </div>
+        </Card>
+
+        <Card className="p-5">
+          <h3 className="font-semibold mb-1">Spending Breakdown</h3>
+          <p className="text-xs text-slate-500 mb-4">Monthly outflow by category</p>
+          {pieData.length>0?(
+            <ResponsiveContainer width="100%" height={200}>
+              <PieChart>
+                <Pie data={pieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} label={({name,percent})=>`${name} ${(percent*100).toFixed(0)}%`} labelLine={false} fontSize={11}>
+                  {pieData.map((e,i)=><Cell key={i} fill={e.fill}/>)}
+                </Pie>
+                <Tooltip formatter={v=>[fmt(v),'Amount']}/>
+              </PieChart>
+            </ResponsiveContainer>
+          ):<EmptyState text="Add income and bills to see breakdown"/>}
+        </Card>
+      </div>
+
+      {personBreakdown.length>0&&(
+        <Card className="p-5">
+          <h3 className="font-semibold mb-4">Breakdown by Person</h3>
+          <div className="space-y-3">
+            {personBreakdown.map(({member,income:inc,bills:bil})=>(
+              <div key={member.id} className="flex items-center gap-4">
+                <PersonAvatar member={member}/>
+                <div className="font-medium w-20 flex-shrink-0">{member.name}</div>
+                <div className="flex-1 space-y-1">
+                  {inc>0&&<div>
+                    <div className="flex justify-between text-xs mb-0.5"><span className="text-slate-500">Income</span><span className="text-emerald-400">{fmt(inc)}/mo</span></div>
+                    <div className="progress-track h-2"><div className="progress-fill bg-emerald-500" style={{width:monthlyIncome>0?inc/monthlyIncome*100+'%':'0%'}}/></div>
+                  </div>}
+                  {bil>0&&<div>
+                    <div className="flex justify-between text-xs mb-0.5"><span className="text-slate-500">Bills</span><span className="text-red-400">{fmt(bil)}/mo</span></div>
+                    <div className="progress-track h-2"><div className="progress-fill bg-red-500" style={{width:totalOutflow>0?bil/totalOutflow*100+'%':'0%'}}/></div>
+                  </div>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {upcomingTrips.length>0&&(
+        <Card className="p-5">
+          <h3 className="font-semibold mb-4">Upcoming Trips</h3>
+          <div className="space-y-3">
+            {upcomingTrips.map(t=>{
+              const months=monthsUntil(t.date);
+              const needed=Math.max(0,t.totalCost-t.currentSavings);
+              const pct=t.totalCost>0?Math.min(100,t.currentSavings/t.totalCost*100):0;
+              return (
+                <div key={t.id} className="flex items-center gap-4">
+                  <span className="text-2xl">✈️</span>
+                  <div className="flex-1">
+                    <div className="flex justify-between">
+                      <span className="font-medium">{t.name}{t.destination&&` · ${t.destination}`}</span>
+                      <span className="text-slate-400 text-sm">{months}mo away</span>
+                    </div>
+                    <div className="progress-track mt-1"><div className="progress-fill bg-blue-500" style={{width:pct+'%'}}/></div>
+                    <div className="flex justify-between text-xs text-slate-500 mt-0.5">
+                      <span>{fmt(t.currentSavings)} saved of {fmt(t.totalCost)}</span>
+                      <span className={needed>0?'text-amber-400':'text-emerald-400'}>{needed>0?`${fmt(needed)} to go`:'Fully funded!'}</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ── SIDEBAR ────────────────────────────────────────────────────────────────
+const NAV=[
+  {id:'dashboard',   icon:'🏠', label:'Dashboard'},
+  {id:'income',      icon:'💰', label:'Income'},
+  {id:'bills',       icon:'📋', label:'Monthly Bills'},
+  {id:'subscriptions',icon:'📱',label:'Subscriptions'},
+  {id:'creditcards', icon:'💳', label:'Credit Cards'},
+  {id:'loans',       icon:'🏦', label:'Loans'},
+  {id:'savings',     icon:'📈', label:'Savings & Investments'},
+  {id:'emergency',   icon:'🛡️', label:'Emergency Fund'},
+  {id:'retirement',  icon:'🏖️', label:'Retirement'},
+  {id:'trips',       icon:'✈️', label:'Trip Savings'},
+  {id:'family',      icon:'👨‍👩‍👧‍👦',label:'Family Members'},
+];
+
+function Sidebar({page,setPage,open,setOpen}) {
+  return (
+    <>
+      {open&&<div className="fixed inset-0 z-30 bg-black/50 lg:hidden" onClick={()=>setOpen(false)}/>}
+      <aside className={`fixed top-0 left-0 h-full z-40 w-64 bg-slate-900 border-r border-slate-800 flex flex-col transition-transform duration-200 ${open?'translate-x-0':'-translate-x-full'} lg:translate-x-0`}>
+        <div className="p-5 border-b border-slate-800">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center text-lg font-bold">K</div>
+            <div>
+              <div className="font-bold text-sm leading-tight">Kudhail Family</div>
+              <div className="text-xs text-slate-500">Finance Tracker</div>
+            </div>
+          </div>
+        </div>
+        <nav className="flex-1 overflow-y-auto py-3">
+          {NAV.map(n=>(
+            <button key={n.id} onClick={()=>{setPage(n.id);setOpen(false);}}
+              className={`nav-item w-full flex items-center gap-3 px-4 py-2.5 text-sm text-left ${page===n.id?'active text-white':'text-slate-400 hover:text-slate-200'}`}>
+              <span className="text-base w-5 text-center">{n.icon}</span>
+              <span>{n.label}</span>
+            </button>
+          ))}
+        </nav>
+        <div className="p-4 border-t border-slate-800 text-xs text-slate-600">
+          Data saved locally in your browser
+        </div>
+      </aside>
+    </>
+  );
+}
+
+// ── APP ────────────────────────────────────────────────────────────────────
+function App() {
+  const stored=load();
+  const [members,  setMembers]  = useState(stored?.members  || DEFAULT_MEMBERS);
+  const [income,   setIncome]   = useState(stored?.income   || []);
+  const [bills,    setBills]    = useState(stored?.bills     || DEFAULT_BILLS);
+  const [subs,     setSubs]     = useState(stored?.subs      || DEFAULT_SUBS);
+  const [cards,    setCards]    = useState(stored?.cards     || []);
+  const [loans,    setLoans]    = useState(stored?.loans     || []);
+  const [savings,  setSavings]  = useState(stored?.savings   || []);
+  const [funds,    setFunds]    = useState(stored?.funds     || []);
+  const [goals,    setGoals]    = useState(stored?.goals     || []);
+  const [trips,    setTrips]    = useState(stored?.trips     || []);
+  const [page,     setPage]     = useState('dashboard');
+  const [person,   setPerson]   = useState('all');
+  const [sideOpen, setSideOpen] = useState(false);
+
+  useEffect(()=>{
+    save({members,income,bills,subs,cards,loans,savings,funds,goals,trips});
+  },[members,income,bills,subs,cards,loans,savings,funds,goals,trips]);
+
+  const monthlyOutflow=useMemo(()=>
+    bills.reduce((s,x)=>s+toMonthly(x.amt,x.freq),0)+
+    subs.reduce((s,x)=>s+toMonthly(x.amt,x.freq),0)+
+    loans.reduce((s,x)=>s+x.monthlyPmt,0)+
+    cards.reduce((s,x)=>s+x.minPmt,0)
+  ,[bills,subs,loans,cards]);
+
+  const sharedProps={members,selectedPerson:person};
+
+  const pages={
+    dashboard:  <Dashboard {...sharedProps} income={income} bills={bills} subs={subs} cards={cards} loans={loans} savings={savings} funds={funds} trips={trips}/>,
+    income:     <IncomePage {...sharedProps} income={income} setIncome={setIncome}/>,
+    bills:      <BillsPage {...sharedProps} bills={bills} setBills={setBills}/>,
+    subscriptions:<SubsPage subs={subs} setSubs={setSubs}/>,
+    creditcards:<CreditCardsPage {...sharedProps} cards={cards} setCards={setCards}/>,
+    loans:      <LoansPage {...sharedProps} loans={loans} setLoans={setLoans}/>,
+    savings:    <SavingsPage {...sharedProps} savings={savings} setSavings={setSavings}/>,
+    emergency:  <EmergencyPage funds={funds} setFunds={setFunds} monthlyOutflow={monthlyOutflow}/>,
+    retirement: <RetirementPage {...sharedProps} goals={goals} setGoals={setGoals}/>,
+    trips:      <TripsPage trips={trips} setTrips={setTrips} income={income}/>,
+    family:     <FamilyPage members={members} setMembers={setMembers}/>,
+  };
+
+  return (
+    <div className="flex h-screen overflow-hidden">
+      <Sidebar page={page} setPage={setPage} open={sideOpen} setOpen={setSideOpen}/>
+      <div className="flex-1 flex flex-col lg:ml-64 overflow-hidden">
+        <header className="bg-slate-900 border-b border-slate-800 px-4 sm:px-6 py-3 flex items-center gap-4 flex-shrink-0">
+          <button className="lg:hidden text-slate-400 hover:text-white" onClick={()=>setSideOpen(true)}>
+            <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+          </button>
+          <div className="flex-1 flex items-center gap-2 overflow-x-auto">
+            {page!=='family'&&page!=='subscriptions'&&(
+              <PersonFilter members={members} selected={person} onChange={setPerson}/>
+            )}
+          </div>
+        </header>
+        <main className="flex-1 overflow-y-auto p-4 sm:p-6">
+          {pages[page]||pages.dashboard}
+        </main>
+      </div>
+    </div>
+  );
+}
+
+const root=ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App/>);
+  </script>
+</body>
+</html>
+

@@ -736,6 +736,40 @@ function FamilyPage({members,setMembers}){
   </div>`;
 }
 
+// ── DONUT CHART ───────────────────────────────────────────────────────────
+function DonutChart({slices,size=180}){
+  const total=slices.reduce((s,x)=>s+x.val,0);
+  if(!total)return html`<div style="text-align:center;color:#64748b;padding:20px">No data</div>`;
+  const cx=size/2,cy=size/2,R=size*0.42,r=size*0.26;
+  let angle=-Math.PI/2;
+  const paths=slices.filter(x=>x.val>0).map(x=>{
+    const sl=(x.val/total)*Math.PI*2;
+    const x1=cx+R*Math.cos(angle),y1=cy+R*Math.sin(angle);
+    const x2=cx+R*Math.cos(angle+sl),y2=cy+R*Math.sin(angle+sl);
+    const ix1=cx+r*Math.cos(angle),iy1=cy+r*Math.sin(angle);
+    const ix2=cx+r*Math.cos(angle+sl),iy2=cy+r*Math.sin(angle+sl);
+    const lg=sl>Math.PI?1:0;
+    const d=`M ${x1} ${y1} A ${R} ${R} 0 ${lg} 1 ${x2} ${y2} L ${ix2} ${iy2} A ${r} ${r} 0 ${lg} 0 ${ix1} ${iy1} Z`;
+    angle+=sl;
+    return{d,col:x.col,label:x.label,val:x.val,pct:Math.round(x.val/total*100)};
+  });
+  return html`<div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap;justify-content:center">
+    <svg width=${size} height=${size} style="flex-shrink:0">
+      ${paths.map(p=>html`<path key=${p.label} d=${p.d} fill=${p.col} stroke="#0f172a" stroke-width="2.5"/>`)}
+      <text x=${cx} y=${cy-6} text-anchor="middle" fill="#e2e8f0" font-size="14" font-weight="700">${fmt(total)}</text>
+      <text x=${cx} y=${cy+10} text-anchor="middle" fill="#64748b" font-size="10">per month</text>
+    </svg>
+    <div style="flex:1;min-width:130px;display:flex;flex-direction:column;gap:8px">
+      ${paths.map(p=>html`<div key=${p.label} style="display:flex;align-items:center;gap:8px">
+        <div style=${'width:10px;height:10px;border-radius:50%;background:'+p.col+';flex-shrink:0'}/>
+        <div style="flex:1;font-size:12px;color:#94a3b8">${p.label}</div>
+        <div style="font-size:12px;font-weight:600;color:#e2e8f0">${fmt(p.val)}</div>
+        <div style="font-size:11px;color:#64748b;min-width:32px;text-align:right">${p.pct}%</div>
+      </div>`)}
+    </div>
+  </div>`;
+}
+
 // ── DASHBOARD ─────────────────────────────────────────────────────────────
 function Dashboard({members,income,bills,subs,cards,loans,savings,funds,trips,sel}){
   const fp=arr=>sel==='all'?arr:arr.filter(x=>x.pid===sel||x.pid==='household');
@@ -763,6 +797,11 @@ function Dashboard({members,income,bills,subs,cards,loans,savings,funds,trips,se
       <${StatCard} label="Emergency Fund"  value=${efMo.toFixed(1)+'mo'} sub=${fmt(efBal)} color=${efMo>=3?'green':'amber'} icon="🛡️"/>
       <${StatCard} label="Total Debt"      value=${fmtK(totalDebt)} color=${totalDebt>0?'red':'green'} icon="💳"/>
     </div>
+    <${Card} cls="p-5">
+      <div class="font-semibold mb-1">Spending Breakdown</div>
+      <div style="font-size:12px;color:#64748b;margin-bottom:16px">Where your money goes each month</div>
+      <${DonutChart} slices=${outItems} size=${200}/>
+    </>
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
       <${Card} cls="p-5">
         <div class="font-semibold mb-1">Cash Flow Breakdown</div>

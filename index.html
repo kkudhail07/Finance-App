@@ -1669,9 +1669,8 @@ function Root(){
 }
 render(html`<${Root}/>`,document.getElementById('root'));
 
-// Re-init lucide after render
+// Re-init lucide once after initial render
 setTimeout(()=>window.lucide&&window.lucide.createIcons(),300);
-new MutationObserver(()=>window.lucide&&window.lucide.createIcons()).observe(document.body,{childList:true,subtree:true});
 </script>
 </body>
 </html>

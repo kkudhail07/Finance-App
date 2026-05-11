@@ -348,6 +348,8 @@ const SEED={
     {id:'t2',name:'Summer in Italy',        destination:'Tuscany, Italy',  date:'2027-07-22',target:4500,saved:800, monthly:240},
     {id:'t3',name:'Lake District half term',destination:'Cumbria, UK',     date:'2026-10-26',target:1200,saved:950, monthly:100},
   ],
+  retirement:{currentAge:47,retireAge:65,targetPot:750000,additionalMonthly:200},
+  family:[...FAMILY],
 };
 function loadStore(){
   try{
@@ -400,7 +402,9 @@ function Money({value,compact=false,decimals}){
 
 // ── Avatar ────────────────────────────────────────────────────────────
 function Avatar({memberId,size=24}){
-  const m=FAMILY.find(f=>f.id===memberId);
+  const ctx=useContext(StoreCtx);
+  const members=(ctx?.store?.family)||FAMILY;
+  const m=members.find(f=>f.id===memberId)||FAMILY.find(f=>f.id===memberId);
   if(!m)return null;
   return html`<span class="family-avatar" style=${{background:m.color,width:size,height:size,fontSize:Math.max(10,size*.42)}} title=${m.name}>${m.name[0]}</span>`;
 }
@@ -725,15 +729,17 @@ function IncomeView(){
   </${Fragment}>`;
 }
 function IncomeEditor({open,income,onClose,onSave}){
+  const{store}=useStore();
   const[f,setF]=useState({});
   useEffect(()=>{setF(income||{})},[income,open]);
   if(!open)return null;
   const u=(k,v)=>setF(p=>({...p,[k]:v}));
+  const fam=store.family||FAMILY;
   return html`<${Modal} open=${open} onClose=${onClose} title=${income?.id?'Edit income':'Add income'}
     actions=${html`<${Fragment}><button class="btn btn-secondary" onClick=${onClose}>Cancel</button><button class="btn btn-primary" onClick=${()=>onSave(f)} disabled=${!f.source||!f.amount}>Save</button></${Fragment}>`}>
     <${Field} label="Source"><${TxtIn} value=${f.source} onChange=${v=>u('source',v)} placeholder="Kuldip — Salary"/></${Field}>
     <div class="field-row">
-      <${Field} label="Recipient"><${Sel} value=${f.owner||'kuldip'} onChange=${v=>u('owner',v)} options=${FAMILY.map(fm=>({value:fm.id,label:fm.name}))}/></${Field}>
+      <${Field} label="Recipient"><${Sel} value=${f.owner||'kuldip'} onChange=${v=>u('owner',v)} options=${fam.map(fm=>({value:fm.id,label:fm.name}))}/></${Field}>
       <${Field} label="Frequency"><${Sel} value=${f.frequency||'monthly'} onChange=${v=>u('frequency',v)} options=${['monthly','yearly','weekly']}/></${Field}>
     </div>
     <div class="field-row">
@@ -833,6 +839,7 @@ function BillsView(){
   const{store,addItem,updateItem,deleteItem}=useStore();
   const[editing,setEditing]=useState(null);
   const[mf,setMf]=useState('all');
+  const fam=store.family||FAMILY;
   const bills=useMemo(()=>mf==='all'?store.bills:store.bills.filter(b=>b.owner===mf),[store.bills,mf]);
   const grouped=useMemo(()=>{const g={};BILL_CATS.forEach(c=>g[c]=[]);bills.forEach(b=>{(g[b.category]=g[b.category]||[]).push(b)});return g},[bills]);
   const total=bills.reduce((s,b)=>s+b.amount,0);
@@ -841,7 +848,7 @@ function BillsView(){
       action=${html`<button class="btn btn-primary" onClick=${()=>setEditing({frequency:'monthly',category:'Home'})}><${Icon} name="plus" size=${14}/> Add bill</button>`}/>
     <div class="row gap-sm" style="margin-bottom:24px;flex-wrap:wrap">
       <button class=${'btn '+(mf==='all'?'btn-secondary':'btn-ghost')} onClick=${()=>setMf('all')}>Everyone</button>
-      ${FAMILY.map(m=>html`<button key=${m.id} class=${'btn '+(mf===m.id?'btn-secondary':'btn-ghost')} onClick=${()=>setMf(m.id)}><${Avatar} memberId=${m.id} size=${18}/> ${m.name}</button>`)}
+      ${fam.map(m=>html`<button key=${m.id} class=${'btn '+(mf===m.id?'btn-secondary':'btn-ghost')} onClick=${()=>setMf(m.id)}><${Avatar} memberId=${m.id} size=${18}/> ${m.name}</button>`)}
     </div>
     <div class="card">
       ${Object.entries(grouped).map(([cat,items])=>{
@@ -874,6 +881,8 @@ function BillsView(){
   </${Fragment}>`;
 }
 function BillEditor({open,bill,onClose,onSave}){
+  const{store}=useStore();
+  const fam=store.family||FAMILY;
   const[f,setF]=useState({});
   useEffect(()=>{setF(bill||{})},[bill,open]);
   if(!open)return null;
@@ -889,7 +898,7 @@ function BillEditor({open,bill,onClose,onSave}){
       <${Field} label="Frequency"><${Sel} value=${f.frequency||'monthly'} onChange=${v=>u('frequency',v)} options=${['weekly','monthly','quarterly','yearly']}/></${Field}>
       <${Field} label="Due day"><${TxtIn} type="number" value=${f.dueDay} onChange=${v=>u('dueDay',v)} placeholder="1–31"/></${Field}>
     </div>
-    <${Field} label="Owner / paid by"><${Sel} value=${f.owner||'kuldip'} onChange=${v=>u('owner',v)} options=${FAMILY.map(fm=>({value:fm.id,label:fm.name}))}/></${Field}>
+    <${Field} label="Owner / paid by"><${Sel} value=${f.owner||'kuldip'} onChange=${v=>u('owner',v)} options=${fam.map(fm=>({value:fm.id,label:fm.name}))}/></${Field}>
   </${Modal}>`;
 }
 
@@ -1265,25 +1274,281 @@ function TripEditor({open,trip,onClose,onSave}){
 }
 
 // ══════════════════════════════════════════════════════════════════════
+// ── EMERGENCY FUND VIEW ───────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+function EmergencyView(){
+  const{store}=useStore();
+  const efBal=store.savings.reduce((s,x)=>s+x.balance,0);
+  const mBills=store.bills.reduce((s,b)=>s+b.amount,0);
+  const mSubs=store.subscriptions.reduce((s,x)=>s+x.amount,0);
+  const monthlyExp=mBills+mSubs;
+  const mosCovered=monthlyExp>0?efBal/monthlyExp:0;
+  const target6=monthlyExp*6;
+  const pct=Math.min(100,(efBal/target6)*100);
+  const health=mosCovered>=6?{label:'Excellent',variant:'success',desc:'You have 6+ months covered — well done!'}
+    :mosCovered>=3?{label:'Good',variant:'teal',desc:'3–6 months covered. Keep building.'}
+    :mosCovered>=1?{label:'Low',variant:'warn',desc:'1–3 months covered. Aim for at least 3.'}
+    :{label:'Critical',variant:'error',desc:'Less than 1 month covered. Prioritise this.'};
+  const shortfall=Math.max(0,target6-efBal);
+  return html`<${Fragment}>
+    <${PageHeader} title="Emergency Fund" subtitle="How many months of expenses are you covered for?"/>
+    <div class="kpi-grid three">
+      <div class="card compact">
+        <div class="card-eyebrow">Months covered</div>
+        <div class="card-value" style=${{fontSize:48,letterSpacing:'-1px',color:mosCovered>=6?'var(--color-success)':mosCovered>=3?'#2d8074':mosCovered>=1?'var(--color-warning)':'var(--color-error)'}}>${mosCovered.toFixed(1)}</div>
+        <div class="muted-sm mt-xs">of 6-month target</div>
+      </div>
+      <${KPI} label="Total savings pot" value=${efBal} icon="piggy-bank"/>
+      <${KPI} label="Monthly expenses" value=${monthlyExp} icon="receipt" sub="bills + subscriptions"/>
+    </div>
+
+    <div class="card" style="margin-bottom:24px">
+      <div class="row-between" style="margin-bottom:12px">
+        <div>
+          <div class="card-title">Progress toward 6-month target</div>
+          <div class="muted-sm mt-xs">${gbp(efBal)} of ${gbp(target6)}</div>
+        </div>
+        <span class=${'badge '+health.variant}>${health.label}</span>
+      </div>
+      <${Bar} pct=${pct} variant=${mosCovered>=6?'teal':mosCovered>=3?'teal':mosCovered>=1?'warn':'error'} thick/>
+      <div class="row-between mt-sm">
+        <div class="muted-sm">${pct.toFixed(0)}% of target</div>
+        ${shortfall>0&&html`<div class="muted-sm">Still need <strong>${gbp(shortfall)}</strong></div>`}
+      </div>
+      <div style="margin-top:16px;padding:12px 16px;background:var(--color-surface-soft);border-radius:var(--radius-md);font-size:13px;color:var(--color-body)">
+        💡 ${health.desc}
+      </div>
+    </div>
+
+    <div class="section-header">
+      <div class="section-title">Your savings accounts</div>
+      <div class="section-subtitle">All accounts count toward your emergency cushion</div>
+    </div>
+    <div class="card">
+      <div class="list">
+        ${store.savings.map(s=>{
+          const mosCov=monthlyExp>0?s.balance/monthlyExp:0;
+          return html`<div key=${s.id} class="list-row" style="grid-template-columns:1fr 90px 110px 90px">
+            <div>
+              <div class="row-label">${s.name}</div>
+              <div class="row-sub">${s.provider} · ${s.rate>0?s.rate.toFixed(2)+'% AER':'No interest'}</div>
+            </div>
+            <span class="badge">${s.type}</span>
+            <div class="row-amount" style="font-size:14px">${mosCov.toFixed(1)} mo</div>
+            <div class="row-amount"><${Money} value=${s.balance}/></div>
+          </div>`;
+        })}
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <div class="card-eyebrow">Build-up calculator</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:8px">
+        <div>
+          <div class="muted-sm">To reach 3-month target (${gbp(monthlyExp*3)})</div>
+          <div class="serif" style="font-size:24px;margin-top:4px">${efBal>=monthlyExp*3?'✅ Already there!':gbp(Math.max(0,monthlyExp*3-efBal))+' to go'}</div>
+        </div>
+        <div>
+          <div class="muted-sm">To reach 6-month target (${gbp(target6)})</div>
+          <div class="serif" style="font-size:24px;margin-top:4px">${efBal>=target6?'✅ Already there!':gbp(shortfall)+' to go'}</div>
+        </div>
+      </div>
+    </div>
+  </${Fragment}>`;
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// ── RETIREMENT PLANNER VIEW ───────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+function RetirementView(){
+  const{store,set}=useStore();
+  const rt=store.retirement||{currentAge:47,retireAge:65,targetPot:750000,additionalMonthly:200};
+  const update=(k,v)=>set(s=>({...s,retirement:{...s.retirement,[k]:v}}));
+
+  const pensionPot=store.investments.filter(i=>i.type==='Pension'||i.type==='ISA').reduce((s,i)=>s+i.value,0);
+  const allInvest=store.investments.reduce((s,i)=>s+i.value,0);
+  const monthlyContrib=store.investments.reduce((s,i)=>s+i.monthly,0)+(rt.additionalMonthly||0);
+  const yearsLeft=Math.max(0,rt.retireAge-rt.currentAge);
+  const n=yearsLeft*12;
+
+  function calcFV(rate){
+    const r=rate/100/12;
+    if(r===0)return allInvest+monthlyContrib*n;
+    return allInvest*Math.pow(1+r,n)+monthlyContrib*(Math.pow(1+r,n)-1)/r;
+  }
+
+  const scenarios=[
+    {label:'Conservative',rate:5, col:'#e8a55a'},
+    {label:'Moderate',   rate:7, col:'#5db8a6'},
+    {label:'Optimistic', rate:10,col:'#5db872'},
+  ];
+
+  return html`<${Fragment}>
+    <${PageHeader} title="Retirement Planner" subtitle="Compound growth projections for your pension pot"/>
+
+    <div class="kpi-grid three">
+      <${KPI} label="Current pension & ISA pot" value=${pensionPot} icon="sun"/>
+      <${KPI} label="Total portfolio" value=${allInvest} icon="line-chart"/>
+      <${KPI} label="Monthly contributions" value=${monthlyContrib} icon="repeat"/>
+    </div>
+
+    <div class="card" style="margin-bottom:24px">
+      <div class="card-eyebrow">Your details</div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-top:8px">
+        <div class="field">
+          <label>Current age</label>
+          <input type="number" value=${rt.currentAge} min="18" max="80" onInput=${e=>update('currentAge',+e.target.value)}/>
+        </div>
+        <div class="field">
+          <label>Target retirement age</label>
+          <input type="number" value=${rt.retireAge} min="40" max="90" onInput=${e=>update('retireAge',+e.target.value)}/>
+        </div>
+        <div class="field">
+          <label>Target pot (£)</label>
+          <input type="number" value=${rt.targetPot} onInput=${e=>update('targetPot',+e.target.value)}/>
+        </div>
+        <div class="field">
+          <label>Extra monthly (£)</label>
+          <input type="number" value=${rt.additionalMonthly} onInput=${e=>update('additionalMonthly',+e.target.value)}/>
+        </div>
+      </div>
+      <div class="muted-sm" style="margin-top:8px">Years to retirement: <strong>${yearsLeft}</strong> · Total contributions over period: <strong>${gbp(monthlyContrib*n)}</strong></div>
+    </div>
+
+    <div class="section-header"><div class="section-title">Growth scenarios</div></div>
+    <div class="section-grid three">
+      ${scenarios.map(sc=>{
+        const fv=calcFV(sc.rate);
+        const onTrack=fv>=rt.targetPot;
+        const pct=Math.min(100,fv/rt.targetPot*100);
+        return html`<div key=${sc.label} class="card">
+          <div class="row-between">
+            <div class="card-eyebrow" style="margin-bottom:0">${sc.label}</div>
+            <span class=${'badge '+(onTrack?'success':'warn')}>${sc.rate}% p.a.</span>
+          </div>
+          <div class="card-value" style=${{color:sc.col,marginTop:12}}><${Money} value=${fv}/></div>
+          <div class="muted-sm mt-xs">projected at age ${rt.retireAge}</div>
+          <${Bar} pct=${pct} variant=${onTrack?'teal':'warn'} thick/>
+          <div class="row-between mt-sm">
+            <div class="muted-sm">${pct.toFixed(0)}% of ${gbp(rt.targetPot,{compact:true})} target</div>
+            <div class="muted-sm" style=${{color:onTrack?'var(--color-success)':'var(--color-warning)'}}>${onTrack?'On track ✓':'Short by '+gbp(rt.targetPot-fv,{compact:true})}</div>
+          </div>
+        </div>`;
+      })}
+    </div>
+
+    <div class="section-header"><div class="section-title">Your investments</div></div>
+    <div class="card">
+      <div class="list">
+        ${store.investments.map(i=>html`<div key=${i.id} class="list-row invest-row">
+          <div>
+            <div class="row-label">${i.name}</div>
+            <div class="row-sub">${i.provider} · YTD ${i.ytdReturn>=0?'+':''}${i.ytdReturn}%</div>
+          </div>
+          <span class="badge">${i.type}</span>
+          <div class="row-amount" style="font-size:14px"><${Money} value=${i.monthly}/>/mo</div>
+          <div class="row-amount"><${Money} value=${i.value}/></div>
+          <div/>
+        </div>`)}
+      </div>
+    </div>
+  </${Fragment}>`;
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// ── FAMILY MEMBERS VIEW ───────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+const PRESET_COLORS=['#cc785c','#5db8a6','#e8a55a','#7d8aa5','#a66c8b','#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6'];
+function FamilyView(){
+  const{store,set}=useStore();
+  const members=store.family||FAMILY;
+  const[editing,setEditing]=useState(null);
+  const saveM=m=>{
+    const next=m.id
+      ?members.map(x=>x.id===m.id?m:x)
+      :[...members,{...m,id:uid()}];
+    set(s=>({...s,family:next}));
+    setEditing(null);
+  };
+  const delM=id=>set(s=>({...s,family:members.filter(x=>x.id!==id)}));
+
+  const{store:st}=useStore();
+  const incomeByMember=id=>st.income.filter(i=>i.owner===id).reduce((s,i)=>s+(i.frequency==='monthly'?i.amount:i.amount/12),0);
+  const billsByMember=id=>st.bills.filter(b=>b.owner===id).reduce((s,b)=>s+b.amount,0);
+
+  return html`<${Fragment}>
+    <${PageHeader} title="Family members" subtitle=${members.length+' people in your household'}
+      action=${html`<button class="btn btn-primary" onClick=${()=>setEditing({role:'Child',color:'#7d8aa5'})}><${Icon} name="plus" size=${14}/> Add member</button>`}/>
+
+    <div class="section-grid two">
+      ${members.map(m=>{
+        const inc=incomeByMember(m.id);
+        const bil=billsByMember(m.id);
+        return html`<div key=${m.id} class="card">
+          <div class="row-between" style="align-items:flex-start">
+            <div class="row gap-md">
+              <div style=${{width:48,height:48,borderRadius:'50%',background:m.color,display:'grid',placeItems:'center',fontSize:20,fontWeight:700,color:'#fff',fontFamily:'var(--font-sans)',flexShrink:0}}>${m.name[0]}</div>
+              <div>
+                <div style="font-family:var(--font-serif);font-size:20px">${m.name}</div>
+                <span class="badge" style="margin-top:4px">${m.role}</span>
+              </div>
+            </div>
+            <div class="row gap-xs">
+              <button class="btn btn-ghost btn-icon" onClick=${()=>setEditing(m)}><${Icon} name="pencil" size=${14}/></button>
+              <${ConfirmBtn} onConfirm=${()=>delM(m.id)}/>
+            </div>
+          </div>
+          ${(inc>0||bil>0)&&html`<div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--color-hairline-soft);display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            ${inc>0&&html`<div><div class="muted-sm">Monthly income</div><div class="serif" style="font-size:20px;color:var(--color-success)"><${Money} value=${inc}/></div></div>`}
+            ${bil>0&&html`<div><div class="muted-sm">Monthly bills</div><div class="serif" style="font-size:20px;color:var(--color-error)"><${Money} value=${bil}/></div></div>`}
+          </div>`}
+        </div>`;
+      })}
+    </div>
+
+    <${MemberEditor} open=${editing!=null} member=${editing} onClose=${()=>setEditing(null)} onSave=${saveM}/>
+  </${Fragment}>`;
+}
+function MemberEditor({open,member,onClose,onSave}){
+  const[f,setF]=useState({});
+  useEffect(()=>{setF(member||{role:'Child',color:'#7d8aa5'})},[member,open]);
+  if(!open)return null;
+  const u=(k,v)=>setF(p=>({...p,[k]:v}));
+  return html`<${Modal} open=${open} onClose=${onClose} title=${member?.id?'Edit member':'Add a family member'}
+    actions=${html`<${Fragment}><button class="btn btn-secondary" onClick=${onClose}>Cancel</button><button class="btn btn-primary" onClick=${()=>onSave(f)} disabled=${!f.name}>Save</button></${Fragment}>`}>
+    <${Field} label="Name"><${TxtIn} value=${f.name} onChange=${v=>u('name',v)} placeholder="Kuldip"/></${Field}>
+    <${Field} label="Role"><${Sel} value=${f.role||'Child'} onChange=${v=>u('role',v)} options=${['Parent','Child','Other']}/></${Field}>
+    <${Field} label="Colour">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
+        ${PRESET_COLORS.map(c=>html`<button key=${c} onClick=${()=>u('color',c)} style=${{width:32,height:32,borderRadius:'50%',border:'none',cursor:'pointer',background:c,outline:f.color===c?'3px solid var(--color-ink)':'none',outlineOffset:'2px'}}/>`)}
+      </div>
+    </${Field}>
+  </${Modal}>`;
+}
+
+// ══════════════════════════════════════════════════════════════════════
 // ── SIDEBAR ───────────────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════
 const NAV=[
-  {id:'overview',    label:'Overview',      icon:'layout-dashboard'},
-  {id:'income',      label:'Income',        icon:'trending-up'},
-  {id:'cards',       label:'Credit cards',  icon:'credit-card'},
-  {id:'bills',       label:'Monthly bills', icon:'receipt'},
-  {id:'subscriptions',label:'Subscriptions',icon:'repeat'},
-  {id:'investments', label:'Investments',   icon:'line-chart'},
-  {id:'savings',     label:'Savings',       icon:'piggy-bank'},
-  {id:'loans',       label:'Loans',         icon:'banknote'},
-  {id:'trips',       label:'Trips',         icon:'plane'},
+  {id:'overview',    label:'Overview',       icon:'layout-dashboard'},
+  {id:'income',      label:'Income',         icon:'trending-up'},
+  {id:'cards',       label:'Credit cards',   icon:'credit-card'},
+  {id:'bills',       label:'Monthly bills',  icon:'receipt'},
+  {id:'subscriptions',label:'Subscriptions', icon:'repeat'},
+  {id:'investments', label:'Investments',    icon:'line-chart'},
+  {id:'savings',     label:'Savings',        icon:'piggy-bank'},
+  {id:'loans',       label:'Loans',          icon:'banknote'},
+  {id:'trips',       label:'Trips',          icon:'plane'},
+  {id:'emergency',   label:'Emergency Fund', icon:'shield'},
+  {id:'retirement',  label:'Retirement',     icon:'sun'},
+  {id:'family',      label:'Family members', icon:'users'},
 ];
 // Inline spike-mark SVG as brand icon
 const SPIKE_SVG=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="28" height="28"><g fill="#cc785c"><path d="M32 4C33.6 16 34.6 22 36 30 34.7 30.6 33.4 31 32 31 30.6 31 29.3 30.6 28 30 29.4 22 30.4 16 32 4Z"/><path d="M32 60C30.4 48 29.4 42 28 34 29.3 33.4 30.6 33 32 33 33.4 33 34.7 33.4 36 34 34.6 42 33.6 48 32 60Z"/><path d="M4 32C16 30.4 22 29.4 30 28 30.6 29.3 31 30.6 31 32 31 33.4 30.6 34.7 30 36 22 34.6 16 33.6 4 32Z"/><path d="M60 32C48 33.6 42 34.6 34 36 33.4 34.7 33 33.4 33 32 33 30.6 33.4 29.3 34 28 42 29.4 48 30.4 60 32Z"/></g></svg>`;
 
 function Sidebar({route,onNavigate}){
   const{store}=useStore();
-  const counts={cards:store.cards.length,bills:store.bills.length,subscriptions:store.subscriptions.length,investments:store.investments.length,savings:store.savings.length,loans:store.loans.length,trips:store.trips.length,income:store.income.length};
+  const counts={cards:store.cards.length,bills:store.bills.length,subscriptions:store.subscriptions.length,investments:store.investments.length,savings:store.savings.length,loans:store.loans.length,trips:store.trips.length,income:store.income.length,family:(store.family||FAMILY).length};
   return html`<aside class="sidebar">
     <div class="brand">
       <span dangerouslySetInnerHTML=${{__html:SPIKE_SVG}}/>
@@ -1301,7 +1566,7 @@ function Sidebar({route,onNavigate}){
     </nav>
     <div class="family-list">
       <div class="nav-section-label">Household</div>
-      ${FAMILY.map(m=>html`<div key=${m.id} class="family-item">
+      ${(store.family||FAMILY).map(m=>html`<div key=${m.id} class="family-item">
         <${Avatar} memberId=${m.id} size=${26}/>
         <div class="col" style="line-height:1.2">
           <span>${m.name}</span>
@@ -1389,6 +1654,9 @@ function App(){
         ${route==='savings'       &&html`<${SavingsView}/>`}
         ${route==='loans'         &&html`<${LoansView}/>`}
         ${route==='trips'         &&html`<${TripsView}/>`}
+        ${route==='emergency'     &&html`<${EmergencyView}/>`}
+        ${route==='retirement'    &&html`<${RetirementView}/>`}
+        ${route==='family'        &&html`<${FamilyView}/>`}
       </main>
     </div>
     ${tweakOpen

@@ -1584,6 +1584,33 @@ function TweaksFab({onClick}){
     <${Icon} name="settings" size=${16}/>
   </button>`;
 }
+function exportData(){
+  const raw=localStorage.getItem(SK);
+  const data=raw||JSON.stringify(SEED);
+  const blob=new Blob([data],{type:'application/json'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;a.download='kudhail-finance-'+new Date().toISOString().slice(0,10)+'.json';
+  a.click();URL.revokeObjectURL(url);
+}
+function importData(onDone){
+  const input=document.createElement('input');
+  input.type='file';input.accept='.json,application/json';
+  input.onchange=e=>{
+    const file=e.target.files[0];if(!file)return;
+    const reader=new FileReader();
+    reader.onload=ev=>{
+      try{
+        const parsed=JSON.parse(ev.target.result);
+        localStorage.setItem(SK,JSON.stringify(parsed));
+        onDone();
+      }catch{alert('Invalid JSON file — import failed.')}
+    };
+    reader.readAsText(file);
+  };
+  input.click();
+}
+
 function TweaksPanel({tweaks,setTweak,reset,onClose}){
   return html`<div class="twk-panel">
     <div class="twk-hd">
@@ -1604,7 +1631,13 @@ function TweaksPanel({tweaks,setTweak,reset,onClose}){
         <span class="twk-lbl">Hide balances</span>
         <button class="twk-toggle" data-on=${tweaks.privacy?'1':'0'} onClick=${()=>setTweak('privacy',!tweaks.privacy)}><i/></button>
       </div>
-      <div class="twk-sect">Data</div>
+      <div class="twk-sect">Data sync</div>
+      <button class="btn btn-ghost" style="font-size:12px;padding:6px 10px;width:100%;justify-content:flex-start;margin-bottom:4px" onClick=${exportData}>
+        <${Icon} name="download" size=${12}/> Export data (.json)
+      </button>
+      <button class="btn btn-ghost" style="font-size:12px;padding:6px 10px;width:100%;justify-content:flex-start;margin-bottom:4px" onClick=${()=>importData(()=>location.reload())}>
+        <${Icon} name="upload" size=${12}/> Import data (.json)
+      </button>
       <button class="btn btn-ghost" style="font-size:12px;padding:6px 10px;width:100%;justify-content:flex-start" onClick=${reset}>
         <${Icon} name="rotate-ccw" size=${12}/> Reset to seed data
       </button>

@@ -233,6 +233,10 @@ a{color:var(--color-primary);text-decoration:none}
   .kpi-grid{grid-template-columns:1fr 1fr}
   .section-grid.two,.section-grid.three,.section-grid.l-r{grid-template-columns:1fr}
 }
+
+/* ── Sync spinner ── */
+.sync-spinner{width:36px;height:36px;border:3px solid var(--color-hairline);border-top-color:var(--color-primary);border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
 </style>
 </head>
 <body>
@@ -242,6 +246,14 @@ import{h,render,Fragment,createContext}from'https://esm.sh/preact@10.22.0';
 import{useState,useEffect,useRef,useMemo,useCallback,useContext}from'https://esm.sh/preact@10.22.0/hooks';
 import htm from'https://esm.sh/htm@3.1.1';
 const html=htm.bind(h);
+
+// ── Firebase ──────────────────────────────────────────────────────────
+import{initializeApp}from'https://www.gstatic.com/firebasejs/11.3.1/firebase-app.js';
+import{getFirestore,doc,onSnapshot,setDoc}from'https://www.gstatic.com/firebasejs/11.3.1/firebase-firestore.js';
+const FB_CFG={apiKey:"AIzaSyD2lKD-Qf28nnIDhrSK10NMy2WVU5JXLPI",authDomain:"kudhail-finance-tracker.firebaseapp.com",projectId:"kudhail-finance-tracker",storageBucket:"kudhail-finance-tracker.firebasestorage.app",messagingSenderId:"289731506530",appId:"1:289731506530:web:8598d6693b43e52198bc3b"};
+const fbApp=initializeApp(FB_CFG);
+const db=getFirestore(fbApp);
+const FAMILY_DOC=doc(db,'families','kudhail');
 
 // ── Formatters ───────────────────────────────────────────────────────
 function gbp(n,{compact=false,decimals}={}){
@@ -366,13 +378,52 @@ const StoreCtx=createContext(null);
 function useStore(){return useContext(StoreCtx)}
 function StoreProvider({children}){
   const[store,setRaw]=useState(()=>loadStore());
-  const set=updater=>{setRaw(s=>{const next=typeof updater==='function'?updater(s):updater;saveStore(next);return next})};
+  const[synced,setSynced]=useState(false);
+  const timerRef=useRef(null);
+
+  // Debounced write to Firestore (1.5 s after last change)
+  const saveRemote=useCallback(data=>{
+    clearTimeout(timerRef.current);
+    timerRef.current=setTimeout(()=>setDoc(FAMILY_DOC,data).catch(console.error),1500);
+  },[]);
+
+  const set=useCallback(updater=>{
+    setRaw(s=>{
+      const next=typeof updater==='function'?updater(s):updater;
+      saveStore(next);   // localStorage cache
+      saveRemote(next);  // Firestore (debounced)
+      return next;
+    });
+  },[saveRemote]);
+
+  // Real-time Firestore listener — fires on every device when data changes
+  useEffect(()=>{
+    const unsub=onSnapshot(FAMILY_DOC,snap=>{
+      if(snap.exists()){
+        const data={...structuredClone(SEED),...snap.data()};
+        setRaw(data);saveStore(data);
+      }else{
+        // First run — push local seed up to Firestore
+        const d=loadStore();
+        setDoc(FAMILY_DOC,d).catch(console.error);
+      }
+      setSynced(true);
+    },err=>{console.error('Firestore:',err);setSynced(true)});
+    return()=>unsub();
+  },[]);
+
   const ops=useMemo(()=>({
     addItem:(col,item)=>set(s=>({...s,[col]:[...s[col],{...item,id:item.id||uid()}]})),
     updateItem:(col,id,patch)=>set(s=>({...s,[col]:s[col].map(it=>it.id===id?{...it,...patch}:it)})),
     deleteItem:(col,id)=>set(s=>({...s,[col]:s[col].filter(it=>it.id!==id)})),
-    reset:()=>setRaw(resetStore()),
-  }),[]);
+    reset:()=>{const d=structuredClone(SEED);saveStore(d);setDoc(FAMILY_DOC,d).catch(console.error);setRaw(d)},
+  }),[set]);
+
+  if(!synced)return html`<div style="display:grid;place-items:center;height:100vh;background:var(--color-canvas);font-family:var(--font-sans);color:var(--color-muted);gap:16px">
+    <div class="sync-spinner"/>
+    <div style="font-size:14px;letter-spacing:.3px">Connecting to Kudhail Finance…</div>
+  </div>`;
+
   return html`<${StoreCtx.Provider} value=${{store,set,...ops}}>${children}</${StoreCtx.Provider}>`;
 }
 
@@ -1602,8 +1653,8 @@ function importData(onDone){
     reader.onload=ev=>{
       try{
         const parsed=JSON.parse(ev.target.result);
-        localStorage.setItem(SK,JSON.stringify(parsed));
-        onDone();
+        saveStore(parsed);
+        setDoc(FAMILY_DOC,parsed).then(()=>onDone()).catch(err=>alert('Import failed: '+err.message));
       }catch{alert('Invalid JSON file — import failed.')}
     };
     reader.readAsText(file);
